@@ -67,7 +67,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {"id": user.id, "email": user.email, "full_name": user.full_name},
+        "user": {"id": user.id, "email": user.email, "full_name": user.full_name, "plan": user.plan or "free"},
     }
 
 
@@ -81,7 +81,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {"id": user.id, "email": user.email, "full_name": user.full_name},
+        "user": {"id": user.id, "email": user.email, "full_name": user.full_name, "plan": user.plan or "free"},
     }
 
 
@@ -91,6 +91,7 @@ def get_me(current_user: models.User = Depends(get_current_user)):
         "id": current_user.id,
         "email": current_user.email,
         "full_name": current_user.full_name,
+        "plan": current_user.plan or "free",
     }
 
 
@@ -164,11 +165,11 @@ def clear_leads(
     return {"status": "cleared", "message": "All your leads and search history have been deleted."}
 
 
-def process_leads_task(industry: str, location: str, user_id: int, batch_id: int, db: Session, auto_enrich: bool):
+def process_leads_task(industry: str, location: str, user_id: int, batch_id: int, db: Session, auto_enrich: bool, max_leads: int):
     """Background task to scrape leads and optionally enrich them."""
     try:
-        raw_leads = scraper.scrape_leads(industry, location, max_results=10)
-        print(f"Scraped {len(raw_leads)} raw leads for '{industry}'")
+        raw_leads = scraper.scrape_leads(industry, location, max_results=max_leads)
+        print(f"Scraped {len(raw_leads)} raw leads for '{industry}' (requested {max_leads})")
 
         saved_count = 0
         for rl in raw_leads:
@@ -177,8 +178,8 @@ def process_leads_task(industry: str, location: str, user_id: int, batch_id: int
                 lead = models.Lead(
                     user_id=user_id,
                     batch_id=batch_id,
-                    name="Decision Maker",
-                    role="Executive",
+                    name=rl.get("name_hint") or "Decision Maker",
+                    role=rl.get("role_hint") or "Executive",
                     company=rl["company"],
                     industry=rl["industry"],
                     location=rl["location"],
@@ -213,8 +214,7 @@ def process_leads_task(industry: str, location: str, user_id: int, batch_id: int
                         lead.name = enriched.get("name", lead.name)
                         lead.role = enriched.get("role", lead.role)
                         lead.summary = enriched.get("summary", lead.summary)
-                        lead.email_draft = enriched.get("email_draft", "")
-                        lead.status = "ready"
+                        lead.status = "enriched"
                         db.commit()
                         print(f"    ✓ Auto-enriched: {lead.name}")
                     except Exception as ai_e:
@@ -248,6 +248,7 @@ def generate_leads(
     background_tasks: BackgroundTasks,
     location: str = None,
     auto_enrich: bool = False,
+    max_leads: int = 10,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
@@ -265,7 +266,15 @@ def generate_leads(
     db.commit()
     db.refresh(batch)
 
-    background_tasks.add_task(process_leads_task, industry, location, current_user.id, batch.id, db, auto_enrich)
+    # Enforce tier-based lead limits
+    user_plan = current_user.plan or "free"
+    plan_max = 10 if user_plan == "free" else 20
+    max_leads = max(1, min(plan_max, max_leads))
+
+    if max_leads > 10 and user_plan == "free":
+        raise HTTPException(status_code=403, detail="Free plan is limited to 10 leads per scan. Upgrade to Pro for up to 20.")
+
+    background_tasks.add_task(process_leads_task, industry, location, current_user.id, batch.id, db, auto_enrich, max_leads)
 
     return {
         "status": "accepted",
@@ -301,8 +310,7 @@ def enrich_single_lead(
         lead.name = enriched.get("name", lead.name)
         lead.role = enriched.get("role", lead.role)
         lead.summary = enriched.get("summary", lead.summary)
-        lead.email_draft = enriched.get("email_draft", "")
-        lead.status = "ready"
+        lead.status = "enriched"
         db.commit()
         db.refresh(lead)
         return lead
@@ -310,3 +318,101 @@ def enrich_single_lead(
         lead.status = "failed"
         db.commit()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/leads/{lead_id}/draft")
+def draft_email_for_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id, models.Lead.user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    lead.status = "drafting"
+    db.commit()
+
+    try:
+        lead_data = {
+            "name": lead.name,
+            "role": lead.role,
+            "company": lead.company,
+            "industry": lead.industry,
+            "location": lead.location,
+            "summary": lead.summary,
+        }
+        email_text = ai.draft_outreach_email(lead_data)
+
+        lead.email_draft = email_text
+        lead.status = "ready"
+        db.commit()
+        db.refresh(lead)
+        return lead
+    except Exception as e:
+        lead.status = "enriched"
+        db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Mock Billing / Stripe Endpoints ────────────────────────────────
+
+PLAN_LIMITS = {
+    "free": {"max_leads": 10, "price": 0, "label": "Free"},
+    "pro": {"max_leads": 20, "price": 29, "label": "Pro"},
+}
+
+@app.get("/api/billing/status")
+def billing_status(
+    current_user: models.User = Depends(get_current_user),
+):
+    plan = current_user.plan or "free"
+    info = PLAN_LIMITS.get(plan, PLAN_LIMITS["free"])
+    return {
+        "plan": plan,
+        "label": info["label"],
+        "max_leads": info["max_leads"],
+        "price": info["price"],
+    }
+
+
+class MockCheckout(BaseModel):
+    payment_method_id: str = "pm_mock_visa_4242"  # Fake Stripe payment method
+
+@app.post("/api/billing/upgrade")
+def mock_upgrade(
+    checkout: MockCheckout,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Mock Stripe upgrade flow.
+    In production this would create a Stripe Checkout Session / Subscription.
+    Here we just flip the user's plan to 'pro'.
+    """
+    if current_user.plan == "pro":
+        return {"status": "already_pro", "message": "You are already on the Pro plan."}
+
+    # Simulate Stripe payment processing (always succeeds)
+    current_user.plan = "pro"
+    db.commit()
+    db.refresh(current_user)
+
+    return {
+        "status": "success",
+        "message": "Upgraded to Pro! You can now generate up to 20 leads per scan.",
+        "plan": "pro",
+        "mock_stripe_charge_id": "ch_mock_" + str(current_user.id) + "_pro",
+    }
+
+
+@app.post("/api/billing/downgrade")
+def mock_downgrade(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Mock downgrade back to free plan."""
+    current_user.plan = "free"
+    db.commit()
+    return {"status": "success", "plan": "free", "message": "Downgraded to Free plan."}
+

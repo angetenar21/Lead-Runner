@@ -15,7 +15,7 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "LeadPulse — AI Lead Generation",
+  title: "Lead Runner — AI Lead Generation",
   description: "Automate scraping and generate personalized outreach drafts with AI.",
 };
 

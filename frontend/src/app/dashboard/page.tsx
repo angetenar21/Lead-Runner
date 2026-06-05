@@ -6,6 +6,45 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 
 const API_BASE = "http://localhost:8000";
 
+const NICHES = [
+  "Software Agency",
+  "Digital Marketing Agency",
+  "Web Design Agency",
+  "SEO Agency",
+  "Social Media Marketing Agency",
+  "Advertising Agency",
+  "PR Agency",
+  "Branding Agency",
+  "Content Marketing Agency",
+  "Video Production Agency",
+  "E-commerce Agency",
+  "Mobile App Development",
+  "Cybersecurity Firm",
+  "IT Consulting",
+  "SaaS Company",
+  "Data Analytics Company",
+  "AI / Machine Learning Company",
+  "Cloud Services Provider",
+  "Real Estate Agency",
+  "Insurance Agency",
+  "Law Firm",
+  "Accounting Firm",
+  "Recruitment Agency",
+  "HR Consulting",
+  "Healthcare Provider",
+  "Dental Clinic",
+  "Fitness / Gym",
+  "Architecture Firm",
+  "Interior Design Studio",
+  "Event Management Company",
+  "Logistics Company",
+  "Construction Company",
+  "Manufacturing Company",
+  "Education / EdTech",
+  "Travel Agency",
+  "Restaurant / Food Services",
+];
+
 interface Lead {
   id: string;
   name: string;
@@ -14,7 +53,7 @@ interface Lead {
   industry: string;
   location: string;
   email: string;
-  status: "idle" | "scraping" | "enriching" | "ready" | "failed";
+  status: "idle" | "scraping" | "enriching" | "enriched" | "drafting" | "ready" | "failed";
   email_draft?: string;
   summary?: string;
 }
@@ -34,12 +73,19 @@ function DashboardContent() {
   const [batches, setBatches] = useState<Batch[]>([]);
   const [activeBatchId, setActiveBatchId] = useState<number | null>(null);
   const [industry, setIndustry] = useState("");
+  const [customNiche, setCustomNiche] = useState("");
   const [location, setLocation] = useState("");
+  const [leadCount, setLeadCount] = useState(10);
   const [autoEnrich, setAutoEnrich] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState<string>("");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
   const [errorMsg, setErrorMsg] = useState("");
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [isUpgrading, setIsUpgrading] = useState(false);
+
+  const userPlan = user?.plan || "free";
+  const maxLeadsForPlan = userPlan === "pro" ? 20 : 10;
 
   const fetchBatches = async () => {
     if (!token) return;
@@ -125,7 +171,7 @@ function DashboardContent() {
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!industry || !token) return;
+    if (!selectedIndustry || !token) return;
 
     setIsGenerating(true);
     setGenerationStep("Sending request to backend...");
@@ -133,7 +179,7 @@ function DashboardContent() {
 
     try {
       const res = await authFetch(
-        `${API_BASE}/api/generate?industry=${encodeURIComponent(industry)}&location=${encodeURIComponent(location)}&auto_enrich=${autoEnrich}`,
+        `${API_BASE}/api/generate?industry=${encodeURIComponent(selectedIndustry)}&location=${encodeURIComponent(location)}&auto_enrich=${autoEnrich}&max_leads=${leadCount}`,
         token,
         { method: "POST" }
       );
@@ -217,6 +263,29 @@ function DashboardContent() {
     }
   };
 
+  const handleDraftEmail = async (leadId: string) => {
+    if (!token) return;
+
+    setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: "drafting" } : l));
+    if (selectedLead?.id === leadId) setSelectedLead({ ...selectedLead, status: "drafting" });
+
+    try {
+      const res = await authFetch(`${API_BASE}/api/leads/${leadId}/draft`, token, { method: "POST" });
+      if (res.ok) {
+        const updatedLead = await res.json();
+        setLeads(prev => prev.map(l => l.id === leadId ? updatedLead : l));
+        if (selectedLead?.id === leadId) setSelectedLead(updatedLead);
+      } else {
+        setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: "enriched" } : l));
+        if (selectedLead?.id === leadId) setSelectedLead({ ...selectedLead, status: "enriched" });
+      }
+    } catch (err) {
+      console.error(err);
+      setLeads(prev => prev.map(l => l.id === leadId ? { ...l, status: "enriched" } : l));
+      if (selectedLead?.id === leadId) setSelectedLead({ ...selectedLead, status: "enriched" });
+    }
+  };
+
   const initials = user?.full_name
     ?.split(" ")
     .map((n) => n[0])
@@ -229,6 +298,32 @@ function DashboardContent() {
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   };
 
+  const handleExportCSV = () => {
+    if (leads.length === 0) return;
+    const headers = ["Name", "Role", "Company", "Industry", "Location", "Email", "Website", "Status", "Summary"];
+    const rows = leads.map(l => [
+      l.name,
+      l.role,
+      l.company,
+      l.industry,
+      l.location,
+      l.email,
+      l.email?.includes("@") ? l.email.split("@")[1] : "",
+      l.status,
+      (l.summary || "").replace(/[\n\r,]/g, " "),
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(c => `"${c || ""}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lead-runner-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const selectedIndustry = industry === "__custom" ? customNiche : industry;
+
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
 
@@ -238,13 +333,9 @@ function DashboardContent() {
           {/* Logo */}
           <div className="p-6 pb-4">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/30">
-                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-              </div>
+              <img src="/logo.png" alt="Lead Runner Logo" className="w-10 h-10 object-contain" />
               <div>
-                <h1 className="font-bold text-lg leading-tight tracking-tight text-slate-900">LeadPulse</h1>
+                <h1 className="font-bold text-lg leading-tight tracking-tight text-slate-900">Lead Runner</h1>
                 <span className="text-xs text-indigo-600 font-semibold tracking-wider uppercase">AI Lead Gen</span>
               </div>
             </div>
@@ -303,10 +394,30 @@ function DashboardContent() {
               {initials}
             </div>
             <div className="flex-1 min-w-0">
-              <h4 className="font-semibold text-sm leading-tight text-slate-900 truncate">{user?.full_name}</h4>
+              <div className="flex items-center gap-2">
+                <h4 className="font-semibold text-sm leading-tight text-slate-900 truncate">{user?.full_name}</h4>
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${
+                  userPlan === "pro"
+                    ? "bg-gradient-to-r from-amber-400 to-orange-500 text-white"
+                    : "bg-slate-200 text-slate-600"
+                }`}>
+                  {userPlan === "pro" ? "⚡ PRO" : "FREE"}
+                </span>
+              </div>
               <span className="text-xs text-slate-500 truncate block">{user?.email}</span>
             </div>
           </div>
+          {userPlan === "free" && (
+            <button
+              onClick={() => setShowUpgradeModal(true)}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 text-xs font-semibold text-amber-700 bg-amber-50 hover:bg-amber-100 rounded-xl border border-amber-200 transition-all"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Upgrade to Pro
+            </button>
+          )}
           <button
             onClick={logout}
             className="w-full flex items-center justify-center gap-2 px-4 py-2 text-xs text-slate-600 hover:text-red-600 hover:bg-red-50 rounded-xl border border-slate-200 transition-all"
@@ -348,7 +459,7 @@ function DashboardContent() {
           <div className="grid grid-cols-3 gap-6">
             {[
               { label: "Total Leads", value: leads.length, sub: activeBatchId ? "In selected batch" : "In your account" },
-              { label: "AI Enriched", value: leads.filter(l => l.status === "ready").length, sub: "Gemini / Groq processed" },
+              { label: "AI Enriched", value: leads.filter(l => l.status === "enriched" || l.status === "ready").length, sub: "Groq / Gemini processed" },
               { label: "Total Searches", value: batches.length, sub: "In search history" },
             ].map((stat, idx) => (
               <div key={idx} className="bg-white p-5 rounded-2xl border border-slate-200 relative overflow-hidden group shadow-sm shadow-slate-200/50">
@@ -368,17 +479,34 @@ function DashboardContent() {
             <h3 className="text-lg font-bold mb-1 text-slate-900">Launch Lead Scanner</h3>
             <p className="text-slate-500 text-sm mb-6">Each scan creates a new entry in your search history on the left.</p>
 
-            <form onSubmit={handleGenerate} className="grid grid-cols-3 gap-6 items-end">
+            <form onSubmit={handleGenerate} className="grid grid-cols-4 gap-4 items-end">
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Industry / Niche</label>
-                <input
-                  type="text"
-                  value={industry}
-                  onChange={e => setIndustry(e.target.value)}
-                  placeholder="e.g. Software Agency, Dental Clinics"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
-                  required
-                />
+                <div className="relative">
+                  <select
+                    value={industry}
+                    onChange={e => { setIndustry(e.target.value); if (e.target.value !== "__custom") setCustomNiche(""); }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all appearance-none cursor-pointer"
+                    required
+                  >
+                    <option value="" disabled>Select a niche…</option>
+                    {NICHES.map(n => <option key={n} value={n}>{n}</option>)}
+                    <option value="__custom">✏️ Custom niche…</option>
+                  </select>
+                  <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+                {industry === "__custom" && (
+                  <input
+                    type="text"
+                    value={customNiche}
+                    onChange={e => setCustomNiche(e.target.value)}
+                    placeholder="Type your custom niche"
+                    className="w-full mt-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                    required
+                  />
+                )}
               </div>
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Location (Optional)</label>
@@ -391,9 +519,38 @@ function DashboardContent() {
                 />
               </div>
               <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                  Leads (1–{maxLeadsForPlan})
+                  {userPlan === "free" && <span className="ml-1 text-amber-500">(Free: max 10)</span>}
+                </label>
+                <div className="relative">
+                  <select
+                    value={leadCount}
+                    onChange={e => {
+                      const val = Number(e.target.value);
+                      if (val > 10 && userPlan === "free") {
+                        setShowUpgradeModal(true);
+                        return;
+                      }
+                      setLeadCount(val);
+                    }}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all appearance-none cursor-pointer"
+                  >
+                    {Array.from({ length: 20 }, (_, i) => i + 1).map(n => (
+                      <option key={n} value={n} disabled={n > 10 && userPlan === "free"}>
+                        {n} lead{n > 1 ? "s" : ""}{n > 10 && userPlan === "free" ? " 🔒 PRO" : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </div>
+              <div>
                 <button
                   type="submit"
-                  disabled={isGenerating || !industry}
+                  disabled={isGenerating || !(industry === "__custom" ? customNiche : industry)}
                   className="w-full bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-xl px-6 py-3 font-semibold text-sm shadow-lg shadow-indigo-500/30 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {isGenerating ? (
@@ -462,7 +619,7 @@ function DashboardContent() {
                   <button onClick={handleClearLeads} className="px-3 py-1.5 text-xs bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg font-medium transition-all">
                     Clear All
                   </button>
-                  <button className="px-3 py-1.5 text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg font-medium transition-all">
+                  <button onClick={handleExportCSV} className="px-3 py-1.5 text-xs bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-lg font-medium transition-all">
                     Export to CSV
                   </button>
                 </div>
@@ -488,7 +645,7 @@ function DashboardContent() {
                           className={`hover:bg-slate-50 cursor-pointer transition-colors ${selectedLead?.id === lead.id ? "bg-slate-50" : ""}`}
                         >
                           <td className="px-6 py-4">
-                            {lead.status === "ready" ? (
+                            {(lead.status === "ready" || lead.status === "enriched" || lead.status === "drafting") ? (
                               <>
                                 <div className="font-semibold text-slate-900">{lead.name}</div>
                                 <div className="text-slate-500 text-xs">{lead.role}</div>
@@ -523,20 +680,34 @@ function DashboardContent() {
                             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
                               lead.status === "ready"
                                 ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : lead.status === "enriching"
+                                : lead.status === "enriched"
+                                ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                : (lead.status === "enriching" || lead.status === "drafting")
                                 ? "bg-blue-50 text-blue-700 border border-blue-200 animate-pulse"
                                 : "bg-slate-100 text-slate-600 border border-slate-200"
                             }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full ${lead.status === "ready" ? "bg-emerald-500" : lead.status === "enriching" ? "bg-blue-500" : "bg-slate-400"}`} />
-                              {lead.status === "ready" ? "Enriched" : lead.status === "enriching" ? "Enriching" : "Idle"}
+                              <span className={`w-1.5 h-1.5 rounded-full ${
+                                lead.status === "ready" ? "bg-emerald-500"
+                                : lead.status === "enriched" ? "bg-amber-500"
+                                : (lead.status === "enriching" || lead.status === "drafting") ? "bg-blue-500"
+                                : "bg-slate-400"
+                              }`} />
+                              {lead.status === "ready" ? "Ready" : lead.status === "enriched" ? "Enriched" : lead.status === "enriching" ? "Enriching" : lead.status === "drafting" ? "Drafting" : "Idle"}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-right">
                             {lead.status === "ready" ? (
-                              <button className="text-indigo-600 hover:text-indigo-700 font-semibold text-xs transition-all">
+                              <button className="text-emerald-600 hover:text-emerald-700 font-semibold text-xs transition-all">
                                 View Draft
                               </button>
-                            ) : lead.status === "enriching" ? (
+                            ) : lead.status === "enriched" ? (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleDraftEmail(lead.id); }}
+                                className="text-amber-600 hover:text-amber-700 font-semibold text-xs transition-all"
+                              >
+                                Draft Email
+                              </button>
+                            ) : (lead.status === "enriching" || lead.status === "drafting") ? (
                               <span className="text-blue-500 text-xs font-medium">Working...</span>
                             ) : (
                               <button
@@ -572,10 +743,10 @@ function DashboardContent() {
                   <div>
                     <span className="text-xs font-semibold text-indigo-600 tracking-wider uppercase">AI Enrichment</span>
                     <h3 className="text-xl font-bold mt-1 leading-tight text-slate-900">
-                      {selectedLead.status === "ready" ? selectedLead.name : selectedLead.company}
+                      {(selectedLead.status === "ready" || selectedLead.status === "enriched" || selectedLead.status === "drafting") ? selectedLead.name : selectedLead.company}
                     </h3>
                     <p className="text-slate-500 text-xs mt-1">
-                      {selectedLead.status === "ready"
+                      {(selectedLead.status === "ready" || selectedLead.status === "enriched" || selectedLead.status === "drafting")
                         ? `${selectedLead.role} at ${selectedLead.company}`
                         : `${selectedLead.location} · ${selectedLead.email}`
                       }
@@ -597,6 +768,32 @@ function DashboardContent() {
                         readOnly
                         className="w-full flex-1 bg-slate-50 rounded-xl p-4 text-xs text-slate-700 font-mono leading-relaxed border border-slate-200 resize-none focus:outline-none"
                       />
+                    ) : selectedLead.status === "enriched" ? (
+                      <div className="flex-1 bg-slate-50 rounded-xl p-4 border border-slate-200 flex flex-col items-center justify-center text-center space-y-4">
+                        <div className="w-12 h-12 rounded-full bg-amber-100 flex items-center justify-center text-amber-500">
+                          <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                          </svg>
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-slate-900">Lead Enriched ✔</h4>
+                          <p className="text-xs text-slate-500 mt-1 max-w-[250px]">Decision-maker identified. Click below to generate a personalized cold outreach email.</p>
+                        </div>
+                        <button
+                          onClick={() => handleDraftEmail(selectedLead.id)}
+                          className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 text-white font-semibold text-xs rounded-xl shadow-md shadow-amber-500/20 transition-all flex items-center gap-2"
+                        >
+                          Draft Outreach Email
+                        </button>
+                      </div>
+                    ) : selectedLead.status === "drafting" ? (
+                      <div className="flex-1 bg-slate-50 rounded-xl p-4 border border-slate-200 flex flex-col items-center justify-center text-center space-y-4">
+                        <svg className="animate-spin h-8 w-8 text-blue-500" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        <p className="text-xs font-medium text-blue-600">AI is writing your email draft...</p>
+                      </div>
                     ) : (
                       <div className="flex-1 bg-slate-50 rounded-xl p-4 border border-slate-200 flex flex-col items-center justify-center text-center space-y-4">
                         <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-500">
@@ -606,7 +803,7 @@ function DashboardContent() {
                         </div>
                         <div>
                           <h4 className="font-semibold text-slate-900">AI Enrichment Needed</h4>
-                          <p className="text-xs text-slate-500 mt-1 max-w-[250px]">Extract deeper insights and draft a personalized cold email using Gemini AI.</p>
+                          <p className="text-xs text-slate-500 mt-1 max-w-[250px]">Extract the decision-maker’s name, role, and company summary using AI.</p>
                         </div>
                         <button
                           onClick={() => handleEnrich(selectedLead.id)}
@@ -674,6 +871,112 @@ function DashboardContent() {
 
         </div>
       </main>
+
+      {/* ── UPGRADE MODAL ── */}
+      {showUpgradeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => !isUpgrading && setShowUpgradeModal(false)}>
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className="relative bg-gradient-to-r from-amber-400 via-orange-500 to-red-500 px-8 py-6 text-white">
+              <button onClick={() => !isUpgrading && setShowUpgradeModal(false)} className="absolute top-4 right-4 text-white/80 hover:text-white transition-colors">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center">
+                  <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold">Upgrade to Pro</h3>
+                  <p className="text-white/80 text-sm">Unlock the full power of Lead Runner</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Comparison */}
+            <div className="px-8 py-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Free</div>
+                  <div className="text-2xl font-extrabold text-slate-900 mt-1">$0<span className="text-sm font-normal text-slate-400">/mo</span></div>
+                  <ul className="mt-3 space-y-2 text-xs text-slate-600">
+                    <li className="flex items-center gap-2"><span className="text-slate-400">✓</span> Up to 10 leads/scan</li>
+                    <li className="flex items-center gap-2"><span className="text-slate-400">✓</span> AI enrichment</li>
+                    <li className="flex items-center gap-2"><span className="text-slate-400">✓</span> Email drafts</li>
+                    <li className="flex items-center gap-2"><span className="text-red-400">✗</span> <span className="text-slate-400">Priority scraping</span></li>
+                  </ul>
+                </div>
+                <div className="p-4 rounded-xl border-2 border-amber-400 bg-amber-50 relative">
+                  <div className="absolute -top-2.5 right-3 px-2 py-0.5 bg-amber-500 text-white text-[10px] font-bold uppercase rounded-full">Popular</div>
+                  <div className="text-xs font-bold uppercase tracking-wider text-amber-600">Pro</div>
+                  <div className="text-2xl font-extrabold text-slate-900 mt-1">$29<span className="text-sm font-normal text-slate-400">/mo</span></div>
+                  <ul className="mt-3 space-y-2 text-xs text-slate-700">
+                    <li className="flex items-center gap-2"><span className="text-emerald-500">✓</span> Up to 20 leads/scan</li>
+                    <li className="flex items-center gap-2"><span className="text-emerald-500">✓</span> AI enrichment</li>
+                    <li className="flex items-center gap-2"><span className="text-emerald-500">✓</span> Email drafts</li>
+                    <li className="flex items-center gap-2"><span className="text-emerald-500">✓</span> Priority scraping</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Mock Stripe Card Form */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Payment Details (Demo)</h4>
+                <div className="flex gap-3">
+                  <input type="text" value="4242 4242 4242 4242" readOnly className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono" />
+                  <input type="text" value="12/28" readOnly className="w-20 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono" />
+                  <input type="text" value="424" readOnly className="w-16 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono" />
+                </div>
+                <p className="text-[10px] text-slate-400 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                  Mock payment — no real charges will be made
+                </p>
+              </div>
+
+              <button
+                onClick={async () => {
+                  if (!token) return;
+                  setIsUpgrading(true);
+                  try {
+                    const res = await authFetch(`${API_BASE}/api/billing/upgrade`, token, {
+                      method: "POST",
+                      body: JSON.stringify({ payment_method_id: "pm_mock_visa_4242" }),
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      // Update user in localStorage and state
+                      const updatedUser = { ...user!, plan: "pro" as const };
+                      localStorage.setItem("user", JSON.stringify(updatedUser));
+                      window.location.reload();
+                    }
+                  } catch (err) {
+                    console.error(err);
+                  } finally {
+                    setIsUpgrading(false);
+                  }
+                }}
+                disabled={isUpgrading}
+                className="w-full bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-600 hover:to-orange-700 text-white rounded-xl px-6 py-3.5 font-bold text-sm shadow-lg shadow-amber-500/30 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isUpgrading ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Processing payment...
+                  </>
+                ) : (
+                  "Upgrade to Pro — $29/mo"
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

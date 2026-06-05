@@ -36,13 +36,9 @@ export default function LoginPage() {
       <div className="relative w-full max-w-md space-y-8">
         {/* Logo */}
         <div className="flex flex-col items-center text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-500 to-violet-600 shadow-lg shadow-indigo-500/30">
-            <svg className="h-7 w-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-          </div>
+          <img src="/logo.png" alt="Lead Runner Logo" className="h-12 w-12 object-contain" />
           <h1 className="mt-4 text-2xl font-bold tracking-tight text-slate-900">Welcome back</h1>
-          <p className="mt-1 text-sm text-slate-500">Sign in to your LeadPulse account</p>
+          <p className="mt-1 text-sm text-slate-500">Sign in to your Lead Runner account</p>
         </div>
 
         {/* Form Card */}

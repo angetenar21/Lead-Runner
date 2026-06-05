@@ -132,8 +132,8 @@ def _parse_json_response(raw: str) -> dict | None:
 
 def enrich_lead(lead_data: dict) -> dict:
     """
-    Takes raw lead data, sends it to AI (Gemini → Groq fallback), and returns
-    an enriched dict with: name, role, summary, email_draft.
+    Step 1: Enriches a lead with name, role, and company summary.
+    Does NOT generate the outreach email draft.
     """
     company = lead_data.get("company", "Unknown Company")
     industry = lead_data.get("industry", "Unknown")
@@ -157,8 +157,7 @@ GENERATE the following as valid JSON (no markdown, no code fences):
 {{
   "contact_name": "A realistic full name of a likely decision-maker at this company (e.g. CEO, VP Sales, Head of Growth). Make it sound real and human.",
   "contact_role": "Their likely job title (e.g. CEO, CTO, VP of Sales, Head of Marketing)",
-  "summary": "A professional 2-sentence company summary based on the snippet. If the snippet is vague, infer from the company name and industry.",
-  "email_draft": "A personalized 3-4 sentence cold outreach email. Address the contact by first name. Reference their company and what they do. Pitch our AI-powered lead generation platform. Sign off as [Your Name]."
+  "summary": "A professional 2-sentence company summary based on the snippet. If the snippet is vague, infer from the company name and industry."
 }}
 
 Return ONLY the JSON object. No explanation, no markdown."""
@@ -172,14 +171,56 @@ Return ONLY the JSON object. No explanation, no markdown."""
                 "name": result.get("contact_name", name_hint or "Decision Maker"),
                 "role": result.get("contact_role", role_hint or "Executive"),
                 "summary": result.get("summary", snippet),
-                "email_draft": result.get("email_draft", ""),
             }
 
     # Fallback — all AI providers failed
-    first_name = name_hint.split()[0] if name_hint else "there"
     return {
         "name": name_hint or "Decision Maker",
         "role": role_hint or "Executive",
         "summary": snippet if snippet else f"{company} is a company operating in the {industry} space.",
-        "email_draft": f"Hi {first_name},\n\nI came across {company} while researching {industry} companies in {location}. Your work in this space caught my attention.\n\nI'd love to show you how our AI-powered platform can automate your lead generation and outreach pipeline.\n\nWould you be open to a quick 15-minute chat this week?\n\nBest,\n[Your Name]",
     }
+
+
+def draft_outreach_email(lead_data: dict) -> str:
+    """
+    Step 2: Generates a personalized cold outreach email for an already-enriched lead.
+    """
+    name = lead_data.get("name", "there")
+    role = lead_data.get("role", "Executive")
+    company = lead_data.get("company", "Unknown Company")
+    industry = lead_data.get("industry", "Unknown")
+    location = lead_data.get("location", "Unknown")
+    summary = lead_data.get("summary", "")
+
+    first_name = name.split()[0] if name and name != "Decision Maker" else "there"
+
+    prompt = f"""You are an expert cold email copywriter for B2B sales outreach.
+
+Write a personalized 3-4 sentence cold outreach email for the following lead:
+
+LEAD INFO:
+- Contact: {name} ({role})
+- Company: {company}
+- Industry: {industry}
+- Location: {location}
+- About: {summary[:500]}
+
+INSTRUCTIONS:
+- Address the contact by their first name ({first_name})
+- Reference their company and what they do specifically
+- Pitch our AI-powered lead generation and outreach automation platform
+- Keep it concise, professional, and warm
+- Sign off as [Your Name]
+
+Return ONLY the email text. No subject line, no JSON, no markdown."""
+
+    raw = _call_ai(prompt)
+
+    if raw:
+        text = raw.strip().strip('"').strip("'")
+        return text
+
+    # Fallback
+    return f"Hi {first_name},\n\nI came across {company} while researching {industry} companies in {location}. Your work in this space caught my attention.\n\nI'd love to show you how our AI-powered platform can automate your lead generation and outreach pipeline.\n\nWould you be open to a quick 15-minute chat this week?\n\nBest,\n[Your Name]"
+
+
