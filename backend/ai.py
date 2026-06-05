@@ -1,28 +1,30 @@
 import os
 import json
 import time
+import requests
 from google import genai
 from dotenv import load_dotenv
 
 load_dotenv()
 
-api_key = os.getenv("GEMINI_API_KEY")
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
 
-# Models to try in order — if primary is overloaded (503), fall back
-MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash-lite"]
+# Gemini models to try in order
+GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash-lite"]
+
+# Groq models (fast open-source LLMs hosted by Groq)
+GROQ_MODELS = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
 
 
-def _call_gemini(prompt: str, max_retries: int = 3) -> str | None:
-    """
-    Calls the Gemini API with automatic retry + model fallback.
-    Returns the response text or None on failure.
-    """
-    if not api_key or api_key == "your_api_key_here":
+def _call_gemini(prompt: str, max_retries: int = 2) -> str | None:
+    """Calls Gemini with retry + model fallback."""
+    if not gemini_api_key or gemini_api_key == "your_api_key_here":
         return None
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=gemini_api_key)
 
-    for model_name in MODELS:
+    for model_name in GEMINI_MODELS:
         for attempt in range(max_retries):
             try:
                 response = client.models.generate_content(
@@ -32,24 +34,105 @@ def _call_gemini(prompt: str, max_retries: int = 3) -> str | None:
                 return response.text.strip()
             except Exception as e:
                 err_str = str(e)
-                # 503 = overloaded, 429 = rate limit → retry with backoff
                 if "503" in err_str or "429" in err_str or "overloaded" in err_str.lower():
-                    wait = (attempt + 1) * 2  # 2s, 4s, 6s
-                    print(f"Gemini {model_name} attempt {attempt+1} got rate-limited. Retrying in {wait}s...")
+                    wait = (attempt + 1) * 2
+                    print(f"  Gemini {model_name} rate-limited (attempt {attempt+1}). Retrying in {wait}s...")
                     time.sleep(wait)
                     continue
                 else:
-                    print(f"Gemini {model_name} error: {e}")
-                    break  # Non-retryable error, try next model
+                    print(f"  Gemini {model_name} error: {e}")
+                    break
 
-        print(f"Model {model_name} exhausted retries, trying next model...")
+        print(f"  Gemini {model_name} exhausted retries.")
 
     return None
 
 
+def _call_groq(prompt: str, max_retries: int = 2) -> str | None:
+    """Calls Groq API (OpenAI-compatible) as a fallback when Gemini is rate-limited."""
+    if not groq_api_key:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {groq_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    for model_name in GROQ_MODELS:
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers,
+                    json={
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7,
+                        "max_tokens": 1024,
+                    },
+                    timeout=15,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data["choices"][0]["message"]["content"].strip()
+                elif resp.status_code == 429:
+                    wait = (attempt + 1) * 2
+                    print(f"  Groq {model_name} rate-limited (attempt {attempt+1}). Retrying in {wait}s...")
+                    time.sleep(wait)
+                    continue
+                else:
+                    print(f"  Groq {model_name} HTTP {resp.status_code}: {resp.text[:200]}")
+                    break
+            except Exception as e:
+                print(f"  Groq {model_name} error: {e}")
+                break
+
+        print(f"  Groq {model_name} exhausted retries.")
+
+    return None
+
+
+def _call_ai(prompt: str) -> str | None:
+    """Tries Groq first, then falls back to Gemini if rate-limited."""
+    # Try Groq first
+    result = _call_groq(prompt)
+    if result:
+        print("  ✓ AI response from Groq")
+        return result
+
+    # Fallback to Gemini
+    print("  → Groq unavailable, falling back to Gemini...")
+    result = _call_gemini(prompt)
+    if result:
+        print("  ✓ AI response from Gemini")
+        return result
+
+    print("  ✗ All AI providers failed")
+    return None
+
+
+def _parse_json_response(raw: str) -> dict | None:
+    """Strips markdown fences and parses JSON from AI response."""
+    text = raw
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    # Also handle ```json prefix
+    if text.startswith("json"):
+        text = text[4:]
+    text = text.strip()
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"  JSON parse error: {e}\n  Raw: {text[:300]}")
+        return None
+
+
 def enrich_lead(lead_data: dict) -> dict:
     """
-    Takes raw lead data, sends it to Gemini, and returns
+    Takes raw lead data, sends it to AI (Gemini → Groq fallback), and returns
     an enriched dict with: name, role, summary, email_draft.
     """
     company = lead_data.get("company", "Unknown Company")
@@ -58,7 +141,6 @@ def enrich_lead(lead_data: dict) -> dict:
     snippet = lead_data.get("summary_raw", "")
     domain = lead_data.get("domain", "")
 
-    # If scraper already provided name/role hints (fallback mode), use them
     name_hint = lead_data.get("name_hint", "")
     role_hint = lead_data.get("role_hint", "")
 
@@ -68,7 +150,7 @@ SCRAPED DATA:
 - Company: {company}
 - Industry: {industry}
 - Location: {location}
-- Website snippet: {snippet}
+- Website snippet: {snippet[:800]}
 - Domain: {domain}
 
 GENERATE the following as valid JSON (no markdown, no code fences):
@@ -81,29 +163,19 @@ GENERATE the following as valid JSON (no markdown, no code fences):
 
 Return ONLY the JSON object. No explanation, no markdown."""
 
-    raw = _call_gemini(prompt)
+    raw = _call_ai(prompt)
 
     if raw:
-        try:
-            # Strip markdown fences if present
-            text = raw
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-            if text.endswith("```"):
-                text = text[:-3]
-            text = text.strip()
-
-            result = json.loads(text)
+        result = _parse_json_response(raw)
+        if result:
             return {
                 "name": result.get("contact_name", name_hint or "Decision Maker"),
                 "role": result.get("contact_role", role_hint or "Executive"),
                 "summary": result.get("summary", snippet),
                 "email_draft": result.get("email_draft", ""),
             }
-        except json.JSONDecodeError as e:
-            print(f"JSON parse error: {e}\nRaw response: {raw[:300]}")
 
-    # Fallback — no API or all retries failed
+    # Fallback — all AI providers failed
     first_name = name_hint.split()[0] if name_hint else "there"
     return {
         "name": name_hint or "Decision Maker",

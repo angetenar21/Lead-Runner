@@ -13,8 +13,26 @@ class User(Base):
     full_name = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relationship to leads
+    # Relationships
     leads = relationship("Lead", back_populates="owner")
+    batches = relationship("SearchBatch", back_populates="owner")
+
+
+class SearchBatch(Base):
+    """Each 'Generate Leads' click creates one batch — shown as a row in search history."""
+    __tablename__ = "search_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    industry = Column(String, nullable=False)
+    location = Column(String, nullable=True)
+    lead_count = Column(Integer, default=0)
+    status = Column(String, default="running")  # running, completed, failed
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    owner = relationship("User", back_populates="batches")
+    leads = relationship("Lead", back_populates="batch")
 
 
 class Lead(Base):
@@ -22,6 +40,7 @@ class Lead(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    batch_id = Column(Integer, ForeignKey("search_batches.id"), nullable=True)
     name = Column(String, index=True)
     role = Column(String, nullable=True)
     company = Column(String, index=True)
@@ -33,5 +52,6 @@ class Lead(Base):
     email_draft = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relationship to user
+    # Relationships
     owner = relationship("User", back_populates="leads")
+    batch = relationship("SearchBatch", back_populates="leads")

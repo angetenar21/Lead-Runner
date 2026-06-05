@@ -50,12 +50,10 @@ def health_check():
 
 @app.post("/api/auth/register")
 def register(req: RegisterRequest, db: Session = Depends(get_db)):
-    # Check if user already exists
     existing = db.query(models.User).filter(models.User.email == req.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Create user
     user = models.User(
         email=req.email,
         password_hash=hash_password(req.password),
@@ -65,7 +63,6 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    # Auto-login: return token immediately after registration
     token = create_access_token({"user_id": user.id, "email": user.email})
     return {
         "access_token": token,
@@ -97,19 +94,63 @@ def get_me(current_user: models.User = Depends(get_current_user)):
     }
 
 
+# ─── Search History (Batches) ───────────────────────────────────────
+
+@app.get("/api/batches")
+def get_batches(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    batches = (
+        db.query(models.SearchBatch)
+        .filter(models.SearchBatch.user_id == current_user.id)
+        .order_by(models.SearchBatch.id.desc())
+        .all()
+    )
+    return [
+        {
+            "id": b.id,
+            "industry": b.industry,
+            "location": b.location,
+            "lead_count": b.lead_count,
+            "status": b.status,
+            "created_at": b.created_at.isoformat() if b.created_at else None,
+        }
+        for b in batches
+    ]
+
+
+@app.delete("/api/batches/{batch_id}")
+def delete_batch(
+    batch_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    batch = db.query(models.SearchBatch).filter(
+        models.SearchBatch.id == batch_id,
+        models.SearchBatch.user_id == current_user.id,
+    ).first()
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
+    # Delete all leads in this batch first
+    db.query(models.Lead).filter(models.Lead.batch_id == batch_id).delete()
+    db.delete(batch)
+    db.commit()
+    return {"status": "deleted"}
+
+
 # ─── Lead Routes (Protected) ────────────────────────────────────────
 
 @app.get("/api/leads")
 def get_leads(
+    batch_id: int = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    return (
-        db.query(models.Lead)
-        .filter(models.Lead.user_id == current_user.id)
-        .order_by(models.Lead.id.desc())
-        .all()
-    )
+    query = db.query(models.Lead).filter(models.Lead.user_id == current_user.id)
+    if batch_id:
+        query = query.filter(models.Lead.batch_id == batch_id)
+    return query.order_by(models.Lead.id.desc()).all()
 
 
 @app.delete("/api/leads")
@@ -118,45 +159,87 @@ def clear_leads(
     current_user: models.User = Depends(get_current_user),
 ):
     db.query(models.Lead).filter(models.Lead.user_id == current_user.id).delete()
+    db.query(models.SearchBatch).filter(models.SearchBatch.user_id == current_user.id).delete()
     db.commit()
-    return {"status": "cleared", "message": "All your leads have been deleted."}
+    return {"status": "cleared", "message": "All your leads and search history have been deleted."}
 
 
-def process_leads_task(industry: str, location: str, user_id: int, db: Session):
-    """Background task to scrape and enrich leads."""
+def process_leads_task(industry: str, location: str, user_id: int, batch_id: int, db: Session, auto_enrich: bool):
+    """Background task to scrape leads and optionally enrich them."""
     try:
         raw_leads = scraper.scrape_leads(industry, location, max_results=10)
         print(f"Scraped {len(raw_leads)} raw leads for '{industry}'")
 
+        saved_count = 0
         for rl in raw_leads:
             try:
-                enriched = ai.enrich_lead(rl)
-
+                # 1. Save initially as idle
                 lead = models.Lead(
                     user_id=user_id,
-                    name=enriched.get("name", "Decision Maker"),
-                    role=enriched.get("role", "Executive"),
+                    batch_id=batch_id,
+                    name="Decision Maker",
+                    role="Executive",
                     company=rl["company"],
                     industry=rl["industry"],
                     location=rl["location"],
                     email=rl["email"],
-                    status="ready",
-                    summary=enriched.get("summary", rl.get("summary_raw", "")),
-                    email_draft=enriched.get("email_draft", ""),
+                    status="idle",
+                    summary=rl.get("summary_raw", ""),
+                    email_draft="",
                 )
                 db.add(lead)
                 db.commit()
-                print(f"  ✓ Saved lead: {lead.name} at {lead.company}")
+                db.refresh(lead)
+                saved_count += 1
+                print(f"  ✓ Saved lead: {lead.company}")
 
-                import time
-                time.sleep(1)
+                # 2. Auto-enrich if requested
+                if auto_enrich:
+                    lead.status = "enriching"
+                    db.commit()
+                    
+                    try:
+                        lead_data = {
+                            "company": lead.company,
+                            "industry": lead.industry,
+                            "location": lead.location,
+                            "summary_raw": lead.summary,
+                            "name_hint": "",
+                            "role_hint": "",
+                            "domain": rl.get("domain", ""),
+                        }
+                        enriched = ai.enrich_lead(lead_data)
+
+                        lead.name = enriched.get("name", lead.name)
+                        lead.role = enriched.get("role", lead.role)
+                        lead.summary = enriched.get("summary", lead.summary)
+                        lead.email_draft = enriched.get("email_draft", "")
+                        lead.status = "ready"
+                        db.commit()
+                        print(f"    ✓ Auto-enriched: {lead.name}")
+                    except Exception as ai_e:
+                        print(f"    ✗ Auto-enrich failed for {lead.company}: {ai_e}")
+                        lead.status = "failed"
+                        db.commit()
+
             except Exception as e:
-                print(f"  ✗ Error processing lead for {rl.get('company', '?')}: {e}")
+                print(f"  ✗ Error saving lead for {rl.get('company', '?')}: {e}")
                 db.rollback()
                 continue
 
+        # Update batch with final count and status
+        batch = db.query(models.SearchBatch).filter(models.SearchBatch.id == batch_id).first()
+        if batch:
+            batch.lead_count = saved_count
+            batch.status = "completed"
+            db.commit()
+
     except Exception as e:
         print(f"Error in lead generation pipeline: {e}")
+        batch = db.query(models.SearchBatch).filter(models.SearchBatch.id == batch_id).first()
+        if batch:
+            batch.status = "failed"
+            db.commit()
 
 
 @app.post("/api/generate")
@@ -164,15 +247,66 @@ def generate_leads(
     industry: str,
     background_tasks: BackgroundTasks,
     location: str = None,
+    auto_enrich: bool = False,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
     if not industry:
         raise HTTPException(status_code=400, detail="Industry is required")
 
-    background_tasks.add_task(process_leads_task, industry, location, current_user.id, db)
+    # Create a new search batch
+    batch = models.SearchBatch(
+        user_id=current_user.id,
+        industry=industry.strip(),
+        location=location.strip() if location else "",
+        status="running",
+    )
+    db.add(batch)
+    db.commit()
+    db.refresh(batch)
+
+    background_tasks.add_task(process_leads_task, industry, location, current_user.id, batch.id, db, auto_enrich)
 
     return {
         "status": "accepted",
+        "batch_id": batch.id,
         "message": f"Lead generation queued for '{industry}' in '{location or 'Anywhere'}'.",
     }
+
+
+@app.post("/api/leads/{lead_id}/enrich")
+def enrich_single_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    lead = db.query(models.Lead).filter(models.Lead.id == lead_id, models.Lead.user_id == current_user.id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    lead.status = "enriching"
+    db.commit()
+
+    try:
+        lead_data = {
+            "company": lead.company,
+            "industry": lead.industry,
+            "location": lead.location,
+            "summary_raw": lead.summary,
+            "name_hint": lead.name if lead.name != "Decision Maker" else "",
+            "role_hint": lead.role if lead.role != "Executive" else "",
+        }
+        enriched = ai.enrich_lead(lead_data)
+
+        lead.name = enriched.get("name", lead.name)
+        lead.role = enriched.get("role", lead.role)
+        lead.summary = enriched.get("summary", lead.summary)
+        lead.email_draft = enriched.get("email_draft", "")
+        lead.status = "ready"
+        db.commit()
+        db.refresh(lead)
+        return lead
+    except Exception as e:
+        lead.status = "failed"
+        db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
