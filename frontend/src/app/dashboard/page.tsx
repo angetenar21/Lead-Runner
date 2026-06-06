@@ -128,6 +128,41 @@ function DashboardContent() {
     fetchBatches();
   }, [token]);
 
+  // Handle Stripe redirect callback
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const upgradeStatus = params.get("upgrade");
+    const sessionId = params.get("session_id");
+
+    if (upgradeStatus === "success" && sessionId && token) {
+      // Verify the checkout session with backend
+      (async () => {
+        try {
+          const res = await authFetch(
+            `${API_BASE}/api/billing/verify-session?session_id=${sessionId}`,
+            token,
+            { method: "POST" }
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (data.status === "success") {
+              const updatedUser = { ...user!, plan: "pro" as const };
+              localStorage.setItem("user", JSON.stringify(updatedUser));
+              // Clean URL and reload
+              window.history.replaceState({}, "", "/dashboard");
+              window.location.reload();
+            }
+          }
+        } catch (err) {
+          console.error("Failed to verify checkout:", err);
+        }
+      })();
+    } else if (upgradeStatus === "cancelled") {
+      // Clean URL
+      window.history.replaceState({}, "", "/dashboard");
+    }
+  }, [token]);
+
   useEffect(() => {
     fetchLeads(activeBatchId);
     setSelectedLead(null);
@@ -922,17 +957,15 @@ function DashboardContent() {
                 </div>
               </div>
 
-              {/* Mock Stripe Card Form */}
-              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Payment Details (Demo)</h4>
-                <div className="flex gap-3">
-                  <input type="text" value="4242 4242 4242 4242" readOnly className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono" />
-                  <input type="text" value="12/28" readOnly className="w-20 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono" />
-                  <input type="text" value="424" readOnly className="w-16 bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 font-mono" />
+              {/* Stripe Checkout Info */}
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Secure Checkout via Stripe</h4>
                 </div>
-                <p className="text-[10px] text-slate-400 flex items-center gap-1">
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
-                  Mock payment — no real charges will be made
+                <p className="text-xs text-slate-500">
+                  You&apos;ll be redirected to Stripe&apos;s secure payment page to complete your subscription.
+                  Use test card <span className="font-mono text-indigo-600">4242 4242 4242 4242</span> with any future date and CVC.
                 </p>
               </div>
 
@@ -941,19 +974,24 @@ function DashboardContent() {
                   if (!token) return;
                   setIsUpgrading(true);
                   try {
-                    const res = await authFetch(`${API_BASE}/api/billing/upgrade`, token, {
+                    const res = await authFetch(`${API_BASE}/api/billing/create-checkout`, token, {
                       method: "POST",
-                      body: JSON.stringify({ payment_method_id: "pm_mock_visa_4242" }),
                     });
                     if (res.ok) {
                       const data = await res.json();
-                      // Update user in localStorage and state
-                      const updatedUser = { ...user!, plan: "pro" as const };
-                      localStorage.setItem("user", JSON.stringify(updatedUser));
-                      window.location.reload();
+                      if (data.checkout_url) {
+                        // Redirect to Stripe Checkout
+                        window.location.href = data.checkout_url;
+                      } else if (data.status === "already_pro") {
+                        window.location.reload();
+                      }
+                    } else {
+                      const err = await res.json();
+                      setErrorMsg(err.detail || "Failed to create checkout session");
                     }
                   } catch (err) {
                     console.error(err);
+                    setErrorMsg("Failed to connect to payment service");
                   } finally {
                     setIsUpgrading(false);
                   }
@@ -967,10 +1005,15 @@ function DashboardContent() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
-                    Processing payment...
+                    Redirecting to Stripe...
                   </>
                 ) : (
-                  "Upgrade to Pro — $29/mo"
+                  <>
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+                    </svg>
+                    Upgrade to Pro — $29/mo
+                  </>
                 )}
               </button>
             </div>

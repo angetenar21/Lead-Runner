@@ -355,7 +355,9 @@ def draft_email_for_lead(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Mock Billing / Stripe Endpoints ────────────────────────────────
+# ─── Stripe Billing Endpoints ───────────────────────────────────────
+
+import billing
 
 PLAN_LIMITS = {
     "free": {"max_leads": 10, "price": 0, "label": "Free"},
@@ -373,46 +375,94 @@ def billing_status(
         "label": info["label"],
         "max_leads": info["max_leads"],
         "price": info["price"],
+        "has_stripe": bool(current_user.stripe_customer_id),
     }
 
 
-class MockCheckout(BaseModel):
-    payment_method_id: str = "pm_mock_visa_4242"  # Fake Stripe payment method
-
-@app.post("/api/billing/upgrade")
-def mock_upgrade(
-    checkout: MockCheckout,
+@app.post("/api/billing/create-checkout")
+def create_checkout(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
     """
-    Mock Stripe upgrade flow.
-    In production this would create a Stripe Checkout Session / Subscription.
-    Here we just flip the user's plan to 'pro'.
+    Creates a Stripe Checkout Session and returns the URL.
+    The frontend redirects the user to this URL for payment.
     """
     if current_user.plan == "pro":
         return {"status": "already_pro", "message": "You are already on the Pro plan."}
 
-    # Simulate Stripe payment processing (always succeeds)
-    current_user.plan = "pro"
-    db.commit()
-    db.refresh(current_user)
+    try:
+        result = billing.create_checkout_session(
+            user_id=current_user.id,
+            user_email=current_user.email,
+        )
+        return {
+            "status": "checkout_created",
+            "checkout_url": result["url"],
+            "session_id": result["session_id"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-    return {
-        "status": "success",
-        "message": "Upgraded to Pro! You can now generate up to 20 leads per scan.",
-        "plan": "pro",
-        "mock_stripe_charge_id": "ch_mock_" + str(current_user.id) + "_pro",
-    }
 
-
-@app.post("/api/billing/downgrade")
-def mock_downgrade(
+@app.post("/api/billing/verify-session")
+def verify_session(
+    session_id: str,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    """Mock downgrade back to free plan."""
+    """
+    Verifies a Stripe Checkout Session after payment.
+    If paid, upgrades the user to Pro.
+    """
+    try:
+        result = billing.verify_checkout_session(session_id)
+
+        if result["paid"] and result["user_id"] == current_user.id:
+            current_user.plan = "pro"
+            current_user.stripe_customer_id = result.get("stripe_customer_id", "")
+            db.commit()
+            db.refresh(current_user)
+
+            return {
+                "status": "success",
+                "plan": "pro",
+                "message": "Payment verified! You are now on the Pro plan.",
+            }
+        else:
+            return {
+                "status": "pending",
+                "message": "Payment not yet confirmed. Please try again.",
+            }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/billing/manage")
+def manage_billing(
+    current_user: models.User = Depends(get_current_user),
+):
+    """
+    Creates a Stripe Customer Portal session for managing subscriptions.
+    """
+    if not current_user.stripe_customer_id:
+        raise HTTPException(status_code=400, detail="No active subscription found.")
+
+    try:
+        portal_url = billing.create_billing_portal_session(current_user.stripe_customer_id)
+        return {"url": portal_url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/billing/downgrade")
+def downgrade(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Downgrade back to free plan."""
     current_user.plan = "free"
     db.commit()
     return {"status": "success", "plan": "free", "message": "Downgraded to Free plan."}
+
 

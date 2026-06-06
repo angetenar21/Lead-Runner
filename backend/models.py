@@ -12,6 +12,7 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     full_name = Column(String, nullable=False)
     plan = Column(String, default="free")  # "free" or "pro"
+    stripe_customer_id = Column(String, nullable=True)  # Stripe customer ID for billing
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
