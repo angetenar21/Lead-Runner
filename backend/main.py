@@ -226,7 +226,17 @@ def process_leads_task(industry: str, location: str, user_id: int, batch_id: int
                         }
                         enriched = ai.enrich_lead(lead_data)
 
-                        lead.name = enriched.get("name", lead.name)
+                        extracted_name = enriched.get("name")
+                        
+                        # Filter out bad results
+                        if not extracted_name or extracted_name.lower().strip() in ["decision maker", "executive", "none", "null"]:
+                            print(f"    ✗ Auto-enrich returned vague name for {lead.company}, deleting lead.")
+                            db.delete(lead)
+                            db.commit()
+                            saved_count -= 1
+                            continue
+
+                        lead.name = extracted_name
                         lead.role = enriched.get("role", lead.role)
                         lead.summary = enriched.get("summary", lead.summary)
                         lead.status = "enriched"

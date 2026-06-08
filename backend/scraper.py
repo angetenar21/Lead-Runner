@@ -345,8 +345,8 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
         f'{ind} solutions OR consulting{loc_query} -best -top -list -review -news -article',
     ]
 
-    # Fetch extra results to compensate for filtering
-    fetch_per_query = max(max_results, 15)
+    # Fetch extra results to compensate for filtering and missing executives
+    fetch_per_query = max(max_results * 3, 30)
 
     if DDGS:
         for query in queries:
@@ -435,6 +435,24 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
                     lead_email = site_info.get("emails", [f"info@{domain}"])[0] if site_info.get("emails") else f"info@{domain}"
                     lead_name = ""
                     lead_role = ""
+
+                    # --- Executive Search & Filtering ---
+                    ceo_search_text = ""
+                    try:
+                        time.sleep(1.0) # Prevent DDG rate limits
+                        with DDGS() as ddgs_exec:
+                            exec_query = f'"{company_name}" CEO OR Founder'
+                            exec_results = ddgs_exec.text(exec_query, max_results=3)
+                            for r in exec_results:
+                                ceo_search_text += f"{r.get('title', '')} - {r.get('body', '')}\n"
+                    except Exception as e:
+                        print(f"  ⊘ Exec search error for {company_name}: {e}")
+                    
+                    if not ceo_search_text.strip():
+                        print(f"  ⊘ Skipped {company_name}: No executive info found on web.")
+                        continue
+                        
+                    final_summary += f"\n\n--- Executive Search Results ---\n{ceo_search_text}"
 
                     leads.append({
                         "company": company_name,

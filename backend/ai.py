@@ -145,20 +145,24 @@ def enrich_lead(lead_data: dict) -> dict:
     name_hint = lead_data.get("name_hint", "")
     role_hint = lead_data.get("role_hint", "")
 
-    prompt = f"""You are an expert B2B sales intelligence assistant. I scraped a business from the web. Generate realistic enrichment data for my CRM.
+    prompt = f"""You are an expert B2B sales intelligence assistant. We scraped a business and performed a targeted executive search. Extract the decision-maker for my CRM.
 
 SCRAPED DATA:
 - Company: {company}
 - Industry: {industry}
 - Location: {location}
-- Website snippet: {snippet[:800]}
-- Domain: {domain}
+- Website & Search Snippets: {snippet[:1500]}
 
-GENERATE the following as valid JSON (no markdown, no code fences):
+INSTRUCTIONS:
+1. Look at the "Executive Search Results" inside the snippets.
+2. Identify the real, human name of the CEO, Founder, or Director.
+3. If you CANNOT find a specific real person's name, return null for contact_name. DO NOT hallucinate. Do NOT use generic titles like "Decision Maker".
+
+GENERATE the following as valid JSON:
 {{
-  "contact_name": "A realistic full name of a likely decision-maker at this company (e.g. CEO, VP Sales, Head of Growth). Make it sound real and human.",
-  "contact_role": "Their likely job title (e.g. CEO, CTO, VP of Sales, Head of Marketing)",
-  "summary": "A professional 2-sentence company summary based on the snippet. If the snippet is vague, infer from the company name and industry."
+  "contact_name": "Exact full name of the executive, or null if absolutely not found.",
+  "contact_role": "Their exact job title (e.g. CEO, Founder). If name is null, this can be null.",
+  "summary": "A professional 2-sentence company summary based on the snippets."
 }}
 
 Return ONLY the JSON object. No explanation, no markdown."""
@@ -175,8 +179,8 @@ Return ONLY the JSON object. No explanation, no markdown."""
         result = _parse_json_response(raw)
         if result:
             final_data = {
-                "name": result.get("contact_name", name_hint or "Decision Maker"),
-                "role": result.get("contact_role", role_hint or "Executive"),
+                "name": result.get("contact_name"), # Can be None/null
+                "role": result.get("contact_role"),
                 "summary": result.get("summary", snippet),
             }
             cache.set_json(cache_key, final_data, expiry_seconds=604800) # 7 days
@@ -184,8 +188,8 @@ Return ONLY the JSON object. No explanation, no markdown."""
 
     # Fallback — all AI providers failed
     return {
-        "name": name_hint or "Decision Maker",
-        "role": role_hint or "Executive",
+        "name": None,
+        "role": None,
         "summary": snippet if snippet else f"{company} is a company operating in the {industry} space.",
     }
 
