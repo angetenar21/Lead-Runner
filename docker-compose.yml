@@ -20,6 +20,14 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ── Redis Cache ──
+  redis:
+    image: redis:7-alpine
+    container_name: leadrunner-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
   # ── FastAPI Backend ──
   backend:
     build:
@@ -33,9 +41,12 @@ services:
     environment:
       # Override DATABASE_URL to point to the 'db' service inside Docker network
       DATABASE_URL: postgresql://postgres:postgres@db:5432/leads_db
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

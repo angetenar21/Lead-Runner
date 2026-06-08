@@ -4,6 +4,7 @@ import time
 import requests
 from google import genai
 from dotenv import load_dotenv
+import cache
 
 load_dotenv()
 
@@ -162,16 +163,24 @@ GENERATE the following as valid JSON (no markdown, no code fences):
 
 Return ONLY the JSON object. No explanation, no markdown."""
 
+    cache_key = f"enrich:{domain}" if domain else f"enrich:company:{company}"
+    cached_result = cache.get_json(cache_key)
+    if cached_result:
+        print(f"  [Cache Hit] Using cached enrichment data for {domain or company}")
+        return cached_result
+
     raw = _call_ai(prompt)
 
     if raw:
         result = _parse_json_response(raw)
         if result:
-            return {
+            final_data = {
                 "name": result.get("contact_name", name_hint or "Decision Maker"),
                 "role": result.get("contact_role", role_hint or "Executive"),
                 "summary": result.get("summary", snippet),
             }
+            cache.set_json(cache_key, final_data, expiry_seconds=604800) # 7 days
+            return final_data
 
     # Fallback — all AI providers failed
     return {
@@ -214,10 +223,17 @@ INSTRUCTIONS:
 
 Return ONLY the email text. No subject line, no JSON, no markdown."""
 
+    cache_key = f"draft:{company}:{role}"
+    cached_draft = cache.get_json(cache_key)
+    if cached_draft and isinstance(cached_draft, dict) and "text" in cached_draft:
+        print(f"  [Cache Hit] Using cached email draft for {company}")
+        return cached_draft["text"]
+
     raw = _call_ai(prompt)
 
     if raw:
         text = raw.strip().strip('"').strip("'")
+        cache.set_json(cache_key, {"text": text}, expiry_seconds=604800) # 7 days
         return text
 
     # Fallback

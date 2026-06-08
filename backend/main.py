@@ -7,6 +7,8 @@ from database import engine, get_db
 from auth import hash_password, verify_password, create_access_token, get_current_user
 import scraper
 import ai
+import cache
+import billing
 
 # We now use Alembic for migrations instead of create_all()
 # models.Base.metadata.create_all(bind=engine)
@@ -168,8 +170,17 @@ def clear_leads(
 def process_leads_task(industry: str, location: str, user_id: int, batch_id: int, db: Session, auto_enrich: bool, max_leads: int):
     """Background task to scrape leads and optionally enrich them."""
     try:
-        raw_leads = scraper.scrape_leads(industry, location, max_results=max_leads)
-        print(f"Scraped {len(raw_leads)} raw leads for '{industry}' (requested {max_leads})")
+        cache_key = f"scrape:{industry.lower()}:{location.lower()}:{max_leads}"
+        cached_leads = cache.get_json(cache_key)
+
+        if cached_leads:
+            print(f"  [Cache Hit] Using cached scraped leads for '{industry}' in '{location}'")
+            raw_leads = cached_leads
+        else:
+            raw_leads = scraper.scrape_leads(industry, location, max_results=max_leads)
+            print(f"Scraped {len(raw_leads)} raw leads for '{industry}' (requested {max_leads})")
+            if raw_leads:
+                cache.set_json(cache_key, raw_leads, expiry_seconds=86400) # cache for 24 hours
 
         saved_count = 0
         for rl in raw_leads:

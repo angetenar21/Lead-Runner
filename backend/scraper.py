@@ -3,7 +3,6 @@ import time
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-import zerobounce
 
 try:
     from ddgs import DDGS
@@ -431,13 +430,11 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
                     # Use scraped location if found, else fall back to user's search query location
                     lead_location = site_info.get("location") or display_location
 
-                    # --- ZeroBounce Email Pipeline ---
-                    lead_email = f"contact@{domain}"
+                    # --- Email Fallback ---
+                    # Use a generic fallback since we're no longer using ZeroBounce
+                    lead_email = site_info.get("emails", [f"info@{domain}"])[0] if site_info.get("emails") else f"info@{domain}"
                     lead_name = ""
                     lead_role = ""
-
-                    if zerobounce.verify_email(f"info@{domain}"):
-                        lead_email = f"info@{domain}"
 
                     leads.append({
                         "company": company_name,
