@@ -16,7 +16,8 @@ import billing
 app = FastAPI(title="AI Lead Gen SaaS API")
 
 import os
-frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+# Strip any trailing slash the user might have accidentally added to FRONTEND_URL
+frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000").rstrip("/")
 
 # Configure CORS so our Next.js app can query us
 app.add_middleware(
