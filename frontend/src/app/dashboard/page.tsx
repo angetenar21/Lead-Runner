@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { useState, useEffect } from "react";
@@ -126,6 +127,7 @@ function DashboardContent() {
 
   useEffect(() => {
     fetchBatches();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   // Handle Stripe redirect callback
@@ -161,11 +163,13 @@ function DashboardContent() {
       // Clean URL
       window.history.replaceState({}, "", "/dashboard");
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   useEffect(() => {
     fetchLeads(activeBatchId);
     setSelectedLead(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeBatchId, token]);
 
   const handleSelectBatch = (batchId: number) => {
@@ -268,7 +272,7 @@ function DashboardContent() {
         setIsGenerating(false);
         setGenerationStep("");
       }
-    } catch (err) {
+    } catch {
       setErrorMsg("Failed to connect to backend generator endpoint.");
       setIsGenerating(false);
       setGenerationStep("");
