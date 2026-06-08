@@ -55,7 +55,7 @@ def create_checkout_session(user_id: int, user_email: str) -> dict:
             "session_id": session.id,
             "url": session.url,
         }
-    except stripe.error.StripeError as e:
+    except Exception as e:
         raise Exception(f"Stripe error: {str(e)}")
 
 
@@ -68,20 +68,22 @@ def verify_checkout_session(session_id: str) -> dict:
         session = stripe.checkout.Session.retrieve(session_id)
 
         if session.payment_status == "paid":
+            user_id_str = session.metadata.get("user_id", "0") if hasattr(session.metadata, 'get') else session.metadata["user_id"]
             return {
                 "paid": True,
-                "user_id": int(session.metadata.get("user_id", 0)),
+                "user_id": int(user_id_str),
                 "customer_email": session.customer_email,
                 "subscription_id": session.subscription,
                 "stripe_customer_id": session.customer,
             }
         else:
+            user_id_str = session.metadata.get("user_id", "0") if hasattr(session.metadata, 'get') else session.metadata["user_id"]
             return {
                 "paid": False,
-                "user_id": int(session.metadata.get("user_id", 0)),
+                "user_id": int(user_id_str),
                 "status": session.payment_status,
             }
-    except stripe.error.StripeError as e:
+    except Exception as e:
         raise Exception(f"Stripe verification error: {str(e)}")
 
 
@@ -96,5 +98,5 @@ def create_billing_portal_session(stripe_customer_id: str) -> str:
             return_url=f"{FRONTEND_URL}/dashboard",
         )
         return session.url
-    except stripe.error.StripeError as e:
+    except Exception as e:
         raise Exception(f"Stripe portal error: {str(e)}")

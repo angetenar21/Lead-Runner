@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useAuth, authFetch } from "@/lib/auth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const NICHES = [
   "Software Agency",

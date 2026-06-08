@@ -1,9 +1,10 @@
 version: '3.8'
 
 services:
+  # ── PostgreSQL Database ──
   db:
     image: postgres:15-alpine
-    container_name: leadgen-db
+    container_name: leadrunner-db
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -12,6 +13,29 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d leads_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── FastAPI Backend ──
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: leadrunner-api
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override DATABASE_URL to point to the 'db' service inside Docker network
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/leads_db
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
