@@ -15,10 +15,13 @@ import billing
 
 app = FastAPI(title="AI Lead Gen SaaS API")
 
-# Configure CORS so our Next.js app on port 3000 can query us
+import os
+frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+
+# Configure CORS so our Next.js app can query us
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", frontend_url],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
