@@ -500,3 +500,86 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
             })
 
     return leads[:max_results]
+
+
+def scrape_target_company(company_name: str):
+    """
+    Scrapes a specific company by its name, finds its official website, and returns a single lead.
+    """
+    if not DDGS:
+        return None
+        
+    query = f'"{company_name}" official website'
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=5))
+            
+        if not results:
+            return None
+            
+        # Try to find the most legitimate-looking domain
+        target_url = None
+        for res in results:
+            url = res.get("href", "")
+            domain = _extract_domain(url)
+            
+            all_blocked = BLOCKED_DOMAINS | NEWS_MEDIA_DOMAINS | AGGREGATOR_DOMAINS
+            if not domain or any(domain == bd or domain.endswith("." + bd) for bd in all_blocked):
+                continue
+            if _is_news_media_domain(domain) or _is_directory_domain(domain):
+                continue
+            if "linkedin.com" in domain or "crunchbase.com" in domain:
+                continue
+            
+            target_url = url
+            break
+            
+        if not target_url:
+            return None
+            
+        domain = _extract_domain(target_url)
+        site_info = scrape_website_info(target_url)
+        
+        # Verify it's not empty
+        if not site_info.get("text") and not site_info.get("title"):
+            return None
+            
+        # Determine location
+        doc = nlp(site_info["text"][:3000])
+        locations = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
+        lead_location = locations[0] if locations else "Remote"
+        
+        industry = "Unknown"
+        final_summary = f"Scraped text from {domain}:\n{site_info['text'][:1500]}"
+        
+        # Executive Search
+        ceo_search_text = ""
+        try:
+            time.sleep(1.0)
+            with DDGS() as ddgs_exec:
+                exec_query = f'"{company_name}" CEO OR Founder'
+                exec_results = ddgs_exec.text(exec_query, max_results=3)
+                for r in exec_results:
+                    ceo_search_text += f"{r.get('title', '')} - {r.get('body', '')}\n"
+        except Exception as e:
+            print(f"  ⊘ Exec search error for {company_name}: {e}")
+            
+        final_summary += f"\n\n--- Executive Search Results ---\n{ceo_search_text}"
+        
+        lead_email = site_info.get("emails", [f"info@{domain}"])[0] if site_info.get("emails") else f"info@{domain}"
+
+        return {
+            "company": company_name,
+            "industry": industry,
+            "location": lead_location,
+            "email": lead_email,
+            "name_hint": "",
+            "role_hint": "",
+            "summary_raw": final_summary,
+            "url": target_url,
+            "domain": domain,
+        }
+
+    except Exception as e:
+        print(f"Error scraping target company {company_name}: {e}")
+        return None

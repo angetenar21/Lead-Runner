@@ -76,6 +76,8 @@ function DashboardContent() {
   const [industry, setIndustry] = useState("");
   const [customNiche, setCustomNiche] = useState("");
   const [location, setLocation] = useState("");
+  const [targetCompany, setTargetCompany] = useState("");
+  const [searchMode, setSearchMode] = useState<"niche" | "company">("niche");
   const [leadCount, setLeadCount] = useState(10);
   const [autoEnrich, setAutoEnrich] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -211,18 +213,20 @@ function DashboardContent() {
 
   const handleGenerate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedIndustry || !token) return;
+    if (!token) return;
+    if (searchMode === "niche" && !selectedIndustry) return;
+    if (searchMode === "company" && !targetCompany.trim()) return;
 
     setIsGenerating(true);
     setGenerationStep("Sending request to backend...");
     setErrorMsg("");
 
     try {
-      const res = await authFetch(
-        `${API_BASE}/api/generate?industry=${encodeURIComponent(selectedIndustry)}&location=${encodeURIComponent(location)}&auto_enrich=${autoEnrich}&max_leads=${leadCount}`,
-        token,
-        { method: "POST" }
-      );
+      const endpoint = searchMode === "company"
+        ? `${API_BASE}/api/generate/company?company_name=${encodeURIComponent(targetCompany)}&auto_enrich=${autoEnrich}`
+        : `${API_BASE}/api/generate?industry=${encodeURIComponent(selectedIndustry)}&location=${encodeURIComponent(location)}&auto_enrich=${autoEnrich}&max_leads=${leadCount}`;
+
+      const res = await authFetch(endpoint, token, { method: "POST" });
 
       if (res.ok) {
         const data = await res.json();
@@ -533,80 +537,115 @@ function DashboardContent() {
           <section className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xl shadow-slate-200/50 relative overflow-hidden">
             <div className="absolute -right-16 -top-16 w-48 h-48 bg-indigo-100 rounded-full blur-3xl pointer-events-none" />
             <h3 className="text-lg font-bold mb-1 text-slate-900">Launch Lead Scanner</h3>
-            <p className="text-slate-500 text-sm mb-6">Each scan creates a new entry in your search history on the left.</p>
+            <p className="text-slate-500 text-sm mb-4">Each scan creates a new entry in your search history on the left.</p>
 
-            <form onSubmit={handleGenerate} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Industry / Niche</label>
-                <div className="relative">
-                  <select
-                    value={industry}
-                    onChange={e => { setIndustry(e.target.value); if (e.target.value !== "__custom") setCustomNiche(""); }}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all appearance-none cursor-pointer"
-                    required
-                  >
-                    <option value="" disabled>Select a niche…</option>
-                    {NICHES.map(n => <option key={n} value={n}>{n}</option>)}
-                    <option value="__custom">✏️ Custom niche…</option>
-                  </select>
-                  <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-                {industry === "__custom" && (
+            {/* SEARCH MODE TOGGLE */}
+            <div className="flex bg-slate-100 p-1 rounded-xl w-max mb-6">
+              <button 
+                type="button"
+                onClick={() => setSearchMode("niche")}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${searchMode === "niche" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+              >
+                Niche Search
+              </button>
+              <button 
+                type="button"
+                onClick={() => setSearchMode("company")}
+                className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${searchMode === "company" ? "bg-white text-indigo-700 shadow-sm" : "text-slate-500 hover:text-slate-700"}`}
+              >
+                Specific Company
+              </button>
+            </div>
+
+            <form onSubmit={handleGenerate} className={`grid ${searchMode === "niche" ? "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4" : "grid-cols-1 sm:grid-cols-2"} gap-4 items-end`}>
+              {searchMode === "niche" ? (
+                <>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Industry / Niche</label>
+                    <div className="relative">
+                      <select
+                        value={industry}
+                        onChange={e => { setIndustry(e.target.value); if (e.target.value !== "__custom") setCustomNiche(""); }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all appearance-none cursor-pointer"
+                        required
+                      >
+                        <option value="" disabled>Select a niche…</option>
+                        {NICHES.map(n => <option key={n} value={n}>{n}</option>)}
+                        <option value="__custom">✏️ Custom niche…</option>
+                      </select>
+                      <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                    {industry === "__custom" && (
+                      <input
+                        type="text"
+                        value={customNiche}
+                        onChange={e => setCustomNiche(e.target.value)}
+                        placeholder="Type your custom niche"
+                        className="w-full mt-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                        required
+                      />
+                    )}
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Location (Optional)</label>
+                    <input
+                      type="text"
+                      value={location}
+                      onChange={e => setLocation(e.target.value)}
+                      placeholder="e.g. New York, London"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
+                      Leads (1–{maxLeadsForPlan})
+                      {userPlan === "free" && <span className="ml-1 text-amber-500">(Free: max 10)</span>}
+                    </label>
+                    <div className="relative">
+                      <select
+                        value={leadCount}
+                        onChange={e => {
+                          const val = Number(e.target.value);
+                          if (val > 10 && userPlan === "free") {
+                            setShowUpgradeModal(true);
+                            return;
+                          }
+                          setLeadCount(val);
+                        }}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all appearance-none cursor-pointer"
+                      >
+                        {Array.from({ length: 20 }, (_, i) => i + 1).map(n => (
+                          <option key={n} value={n} disabled={n > 10 && userPlan === "free"}>
+                            {n} lead{n > 1 ? "s" : ""}{n > 10 && userPlan === "free" ? " 🔒 PRO" : ""}
+                          </option>
+                        ))}
+                      </select>
+                      <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="sm:col-span-1">
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Target Company Name</label>
                   <input
                     type="text"
-                    value={customNiche}
-                    onChange={e => setCustomNiche(e.target.value)}
-                    placeholder="Type your custom niche"
-                    className="w-full mt-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
+                    value={targetCompany}
+                    onChange={e => setTargetCompany(e.target.value)}
+                    placeholder="e.g. OpenAI, Stripe, Notion"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
                     required
                   />
-                )}
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Location (Optional)</label>
-                <input
-                  type="text"
-                  value={location}
-                  onChange={e => setLocation(e.target.value)}
-                  placeholder="e.g. New York, London"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">
-                  Leads (1–{maxLeadsForPlan})
-                  {userPlan === "free" && <span className="ml-1 text-amber-500">(Free: max 10)</span>}
-                </label>
-                <div className="relative">
-                  <select
-                    value={leadCount}
-                    onChange={e => {
-                      const val = Number(e.target.value);
-                      if (val > 10 && userPlan === "free") {
-                        setShowUpgradeModal(true);
-                        return;
-                      }
-                      setLeadCount(val);
-                    }}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 pr-10 text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm transition-all appearance-none cursor-pointer"
-                  >
-                    {Array.from({ length: 20 }, (_, i) => i + 1).map(n => (
-                      <option key={n} value={n} disabled={n > 10 && userPlan === "free"}>
-                        {n} lead{n > 1 ? "s" : ""}{n > 10 && userPlan === "free" ? " 🔒 PRO" : ""}
-                      </option>
-                    ))}
-                  </select>
-                  <svg className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
                 </div>
-              </div>
+              )}
+              
               <div>
                 <button
                   type="submit"
-                  disabled={isGenerating || !(industry === "__custom" ? customNiche : industry)}
+                  disabled={isGenerating || (searchMode === "niche" && !(industry === "__custom" ? customNiche : industry)) || (searchMode === "company" && !targetCompany.trim())}
                   className="w-full bg-gradient-to-r from-indigo-500 to-violet-600 hover:from-indigo-600 hover:to-violet-700 text-white rounded-xl px-6 py-3 font-semibold text-sm shadow-lg shadow-indigo-500/30 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                 >
                   {isGenerating ? (
