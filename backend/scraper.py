@@ -449,8 +449,7 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
                         print(f"  ⊘ Exec search error for {company_name}: {e}")
                     
                     if not ceo_search_text.strip():
-                        print(f"  ⊘ Skipped {company_name}: No executive info found on web.")
-                        continue
+                        print(f"  ⚠ No executive info found for {company_name}, but continuing anyway.")
                         
                     final_summary += f"\n\n--- Executive Search Results ---\n{ceo_search_text}"
 

@@ -228,13 +228,9 @@ def process_leads_task(industry: str, location: str, user_id: int, batch_id: int
 
                         extracted_name = enriched.get("name")
                         
-                        # Filter out bad results
+                        # Fallback for vague names
                         if not extracted_name or extracted_name.lower().strip() in ["decision maker", "executive", "none", "null"]:
-                            print(f"    ✗ Auto-enrich returned vague name for {lead.company}, deleting lead.")
-                            db.delete(lead)
-                            db.commit()
-                            saved_count -= 1
-                            continue
+                            extracted_name = "Decision Maker"
 
                         lead.name = extracted_name
                         lead.role = enriched.get("role", lead.role)
