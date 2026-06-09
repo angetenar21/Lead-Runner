@@ -10,6 +10,15 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
+// Validate that required environment variables are set
+const missingKeys = Object.entries(firebaseConfig)
+  .filter(([_, value]) => !value)
+  .map(([key, _]) => key);
+
+if (missingKeys.length > 0) {
+  throw new Error(`Firebase initialization is missing required config keys: ${missingKeys.join(", ")}. Please check your .env.local file.`);
+}
+
 // Initialize Firebase (avoid duplicate initialization in Next.js)
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
