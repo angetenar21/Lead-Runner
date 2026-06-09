@@ -365,14 +365,14 @@ def scrape_leads_generator(industry: str, location: str, max_results: int = 10):
 
     if DDGS:
         for query in queries:
-            if len(leads) >= max_results:
+            if yielded_count >= max_results:
                 break
             try:
                 with DDGS() as ddgs:
                     results = list(ddgs.text(query, max_results=fetch_per_query))
 
                 for res in results:
-                    if len(leads) >= max_results:
+                    if yielded_count >= max_results:
                         break
 
                     title = res.get("title", "")
