@@ -215,73 +215,71 @@ def process_leads_task(industry: str, location: str, user_id: int, batch_id: int
         if cached_leads:
             print(f"  [Cache Hit] Using cached scraped leads for '{industry}' in '{location}'")
             raw_leads = cached_leads
+            # For cache hits, we just save them all sequentially
+            saved_count = 0
+            for rl in raw_leads:
+                try:
+                    lead = models.Lead(
+                        user_id=user_id,
+                        batch_id=batch_id,
+                        name=rl.get("name_hint") or "Decision Maker",
+                        role=rl.get("role_hint") or "Executive",
+                        company=rl["company"],
+                        industry=rl["industry"],
+                        location=rl["location"],
+                        email=rl["email"],
+                        status="idle",
+                        summary=rl.get("summary_raw", ""),
+                        email_draft="",
+                    )
+                    db.add(lead)
+                    db.commit()
+                    db.refresh(lead)
+                    saved_count += 1
+                    print(f"  ✓ Saved lead: {lead.company}")
+                    
+                    if auto_enrich:
+                        _auto_enrich_lead(lead, rl, db)
+
+                except Exception as e:
+                    print(f"  ✗ Error saving cached lead {rl.get('company', '?')}: {e}")
+                    db.rollback()
         else:
-            raw_leads = scraper.scrape_leads(industry, location, max_results=max_leads)
-            print(f"Scraped {len(raw_leads)} raw leads for '{industry}' (requested {max_leads})")
+            raw_leads = []
+            saved_count = 0
+            # Stream leads and save them immediately as they are generated
+            for rl in scraper.scrape_leads_generator(industry, location, max_results=max_leads):
+                raw_leads.append(rl)
+                try:
+                    lead = models.Lead(
+                        user_id=user_id,
+                        batch_id=batch_id,
+                        name=rl.get("name_hint") or "Decision Maker",
+                        role=rl.get("role_hint") or "Executive",
+                        company=rl["company"],
+                        industry=rl["industry"],
+                        location=rl["location"],
+                        email=rl["email"],
+                        status="idle",
+                        summary=rl.get("summary_raw", ""),
+                        email_draft="",
+                    )
+                    db.add(lead)
+                    db.commit()
+                    db.refresh(lead)
+                    saved_count += 1
+                    print(f"  ✓ Saved streamed lead: {lead.company}")
+                    
+                    if auto_enrich:
+                        _auto_enrich_lead(lead, rl, db)
+
+                except Exception as e:
+                    print(f"  ✗ Error saving streamed lead for {rl.get('company', '?')}: {e}")
+                    db.rollback()
+            
+            print(f"Scraped {saved_count} raw leads for '{industry}' (requested {max_leads})")
             if raw_leads:
                 cache.set_json(cache_key, raw_leads, expiry_seconds=86400) # cache for 24 hours
-
-        saved_count = 0
-        for rl in raw_leads:
-            try:
-                # 1. Save initially as idle
-                lead = models.Lead(
-                    user_id=user_id,
-                    batch_id=batch_id,
-                    name=rl.get("name_hint") or "Decision Maker",
-                    role=rl.get("role_hint") or "Executive",
-                    company=rl["company"],
-                    industry=rl["industry"],
-                    location=rl["location"],
-                    email=rl["email"],
-                    status="idle",
-                    summary=rl.get("summary_raw", ""),
-                    email_draft="",
-                )
-                db.add(lead)
-                db.commit()
-                db.refresh(lead)
-                saved_count += 1
-                print(f"  ✓ Saved lead: {lead.company}")
-
-                # 2. Auto-enrich if requested
-                if auto_enrich:
-                    lead.status = "enriching"
-                    db.commit()
-                    
-                    try:
-                        lead_data = {
-                            "company": lead.company,
-                            "industry": lead.industry,
-                            "location": lead.location,
-                            "summary_raw": lead.summary,
-                            "name_hint": "",
-                            "role_hint": "",
-                            "domain": rl.get("domain", ""),
-                        }
-                        enriched = ai.enrich_lead(lead_data)
-
-                        extracted_name = enriched.get("name")
-                        
-                        # Fallback for vague names
-                        if not extracted_name or extracted_name.lower().strip() in ["decision maker", "executive", "none", "null"]:
-                            extracted_name = "Decision Maker"
-
-                        lead.name = extracted_name
-                        lead.role = enriched.get("role", lead.role)
-                        lead.summary = enriched.get("summary", lead.summary)
-                        lead.status = "enriched"
-                        db.commit()
-                        print(f"    ✓ Auto-enriched: {lead.name}")
-                    except Exception as ai_e:
-                        print(f"    ✗ Auto-enrich failed for {lead.company}: {ai_e}")
-                        lead.status = "failed"
-                        db.commit()
-
-            except Exception as e:
-                print(f"  ✗ Error saving lead for {rl.get('company', '?')}: {e}")
-                db.rollback()
-                continue
 
         # Update batch with final count and status
         batch = db.query(models.SearchBatch).filter(models.SearchBatch.id == batch_id).first()
@@ -296,6 +294,41 @@ def process_leads_task(industry: str, location: str, user_id: int, batch_id: int
         if batch:
             batch.status = "failed"
             db.commit()
+
+
+def _auto_enrich_lead(lead: models.Lead, rl: dict, db: Session):
+    """Helper to auto-enrich a lead"""
+    lead.status = "enriching"
+    db.commit()
+    
+    try:
+        lead_data = {
+            "company": lead.company,
+            "industry": lead.industry,
+            "location": lead.location,
+            "summary_raw": lead.summary,
+            "name_hint": "",
+            "role_hint": "",
+            "domain": rl.get("domain", ""),
+        }
+        enriched = ai.enrich_lead(lead_data)
+
+        extracted_name = enriched.get("name")
+        
+        # Fallback for vague names
+        if not extracted_name or extracted_name.lower().strip() in ["decision maker", "executive", "none", "null"]:
+            extracted_name = "Decision Maker"
+
+        lead.name = extracted_name
+        lead.role = enriched.get("role", lead.role)
+        lead.summary = enriched.get("summary", lead.summary)
+        lead.status = "enriched"
+        db.commit()
+        print(f"    ✓ Auto-enriched: {lead.name}")
+    except Exception as ai_e:
+        print(f"    ✗ Auto-enrich failed for {lead.company}: {ai_e}")
+        lead.status = "failed"
+        db.commit()
 
 
 @app.post("/api/generate")

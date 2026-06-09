@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAuth, authFetch } from "@/lib/auth";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
@@ -73,6 +73,12 @@ function DashboardContent() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [activeBatchId, setActiveBatchId] = useState<number | null>(null);
+  const activeBatchIdRef = useRef<number | null>(null);
+  
+  useEffect(() => {
+    activeBatchIdRef.current = activeBatchId;
+  }, [activeBatchId]);
+
   const [industry, setIndustry] = useState("");
   const [customNiche, setCustomNiche] = useState("");
   const [location, setLocation] = useState("");
@@ -237,9 +243,15 @@ function DashboardContent() {
           const leadsRes = await authFetch(`${API_BASE}/api/leads?batch_id=${newBatchId}`, token!);
           if (leadsRes.ok) {
             const leadsData = await leadsRes.json();
-            setLeads(leadsData);
-            if (leadsData.length > 0 && !selectedLead) {
-              setSelectedLead(leadsData[0]);
+            
+            // BUG FIX: Only update the UI if the user hasn't clicked a different batch!
+            if (activeBatchIdRef.current === newBatchId) {
+              setLeads(leadsData);
+              // Safely set selectedLead only if we don't already have one, or if we want to auto-select the newest
+              setSelectedLead((prev) => {
+                if (!prev && leadsData.length > 0) return leadsData[0];
+                return prev;
+              });
             }
           }
 
@@ -255,8 +267,10 @@ function DashboardContent() {
               setGenerationStep("");
               setIndustry("");
               setLocation("");
-              // Final fetch
-              fetchLeads(newBatchId);
+              // Final fetch only if they are still on this batch
+              if (activeBatchIdRef.current === newBatchId) {
+                fetchLeads(newBatchId);
+              }
             }
           }
         }, 2500);
@@ -264,7 +278,9 @@ function DashboardContent() {
         setTimeout(() => {
           clearInterval(poll);
           fetchBatches();
-          fetchLeads(newBatchId);
+          if (activeBatchIdRef.current === newBatchId) {
+            fetchLeads(newBatchId);
+          }
           setIsGenerating(false);
           setGenerationStep("");
         }, 90000);
@@ -375,10 +391,8 @@ function DashboardContent() {
         />
       )}
 
-      {/* SIDEBAR */}
       <aside className={`fixed inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 flex flex-col justify-between transform transition-transform duration-300 md:relative md:translate-x-0 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex-1 overflow-hidden flex flex-col">
-          {/* Logo */}
           <div className="p-6 pb-4">
             <div className="flex items-center gap-3">
               <img src="/logo.png" alt="Lead Runner Logo" className="w-10 h-10 object-contain" />
@@ -389,7 +403,6 @@ function DashboardContent() {
             </div>
           </div>
 
-          {/* Search History */}
           <div className="px-6 pb-2">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Search History</h3>
           </div>
@@ -435,7 +448,6 @@ function DashboardContent() {
           </div>
         </div>
 
-        {/* User Card */}
         <div className="p-4 space-y-3 border-t border-slate-100">
           <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-2xl border border-slate-200">
             <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-indigo-500 to-violet-600 flex items-center justify-center font-bold text-white text-sm">
@@ -478,10 +490,7 @@ function DashboardContent() {
         </div>
       </aside>
 
-      {/* MAIN CONTAINER */}
       <main className="flex-1 flex flex-col overflow-hidden">
-
-        {/* HEADER */}
         <header className="h-14 border-b border-slate-200 px-4 md:px-8 flex items-center bg-white/80 backdrop-blur-md gap-3">
           <button 
             className="md:hidden p-1 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors" 
@@ -502,16 +511,12 @@ function DashboardContent() {
           </div>
         </header>
 
-        {/* SCROLLABLE MAIN CONTENT */}
         <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 md:space-y-8 bg-slate-50">
-
-          {/* TITLE */}
           <div>
             <h2 className="text-2xl font-bold tracking-tight text-slate-900">Welcome back, {user?.full_name?.split(" ")[0]}</h2>
             <p className="text-slate-500 text-sm">Automate scraping and generate personalized outreach drafts in seconds.</p>
           </div>
 
-          {/* STATS ROW */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
             {[
               { label: "Total Leads", value: leads.length, sub: activeBatchId ? "In selected batch" : "In your account" },
@@ -529,7 +534,6 @@ function DashboardContent() {
             ))}
           </div>
 
-          {/* GENERATION BOX */}
           <section className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xl shadow-slate-200/50 relative overflow-hidden">
             <div className="absolute -right-16 -top-16 w-48 h-48 bg-indigo-100 rounded-full blur-3xl pointer-events-none" />
             <h3 className="text-lg font-bold mb-1 text-slate-900">Launch Lead Scanner</h3>
@@ -653,9 +657,7 @@ function DashboardContent() {
             )}
           </section>
 
-          {/* TABLE & OUTREACH VIEW SPLIT */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
-            {/* Leads Table */}
             <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm shadow-slate-200/50">
               <div className="p-4 md:p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0">
                 <div>
@@ -792,7 +794,6 @@ function DashboardContent() {
               </div>
             </div>
 
-            {/* AI Copy Preview */}
             <div className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col justify-between shadow-sm shadow-slate-200/50">
               {selectedLead ? (
                 <div className="space-y-6 flex-1 flex flex-col">
@@ -910,25 +911,25 @@ function DashboardContent() {
                   </div>
                 </div>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-center space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400">
-                    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                    </svg>
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900">No Lead Selected</h4>
-                    <p className="text-xs text-slate-500 max-w-[200px] mt-1">Select a contact from the list to view their AI-enriched bio and customized email draft.</p>
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-100">
+                      <svg className="h-8 w-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                      </svg>
+                    </div>
+                    <h3 className="text-sm font-semibold text-slate-900">No Lead Selected</h3>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {leads.length > 0 ? "Select a lead from the list to view details." : "Generate leads to see them appear here."}
+                    </p>
                   </div>
                 </div>
               )}
             </div>
           </div>
-
         </div>
       </main>
 
-      {/* ── UPGRADE MODAL ── */}
       {showUpgradeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onClick={() => !isUpgrading && setShowUpgradeModal(false)}>
           <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden" onClick={e => e.stopPropagation()}>

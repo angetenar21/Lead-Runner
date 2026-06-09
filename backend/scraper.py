@@ -316,20 +316,35 @@ def scrape_website_info(url: str) -> dict:
     return result
 
 
-def scrape_leads(industry: str, location: str, max_results: int = 10):
+def scrape_leads_generator(industry: str, location: str, max_results: int = 10):
     """
-    Scrapes real company leads from the web.
+    Scrapes DuckDuckGo and yields lead dictionaries one by one as they are found.
+    This enables real-time streaming of results to the frontend.
+    """
+    if not DDGS:
+        print("DuckDuckGo Search library not installed. Yielding demo data.")
+        demo_companies = [
+            ("Alpha", "CEO"), ("Beta", "CTO"), ("Gamma", "VP Sales")
+        ]
+        for prefix, role in demo_companies:
+            yield {
+                "company": f"{prefix} {industry.title()}",
+                "industry": industry,
+                "location": location,
+                "email": f"contact@{prefix.lower()}{industry.replace(' ', '').lower()}.com",
+                "summary_raw": "Demo company data due to missing dependencies.",
+                "url": f"https://{prefix.lower()}{industry.replace(' ', '').lower()}.com",
+                "domain": f"{prefix.lower()}{industry.replace(' ', '').lower()}.com",
+                "name_hint": "Demo User",
+                "role_hint": role,
+            }
+        return
 
-    Pipeline:
-    1. DuckDuckGo search → find company URLs
-    2. Filter out listicles, aggregators, news/media sites, and blocked sites
-    3. Visit each real company site with requests + BeautifulSoup
-    4. Extract real company name and page text from the HTML
-    5. Validate that company name is real (not an article title)
-    """
-    all_blocked = BLOCKED_DOMAINS | NEWS_MEDIA_DOMAINS | AGGREGATOR_DOMAINS
-    leads = []
+    print(f"\n=== Streaming Leads for: {industry} in {location} ===")
+    
+    yielded_count = 0
     seen_domains = set()
+    all_blocked = BLOCKED_DOMAINS | NEWS_MEDIA_DOMAINS | AGGREGATOR_DOMAINS
 
     loc_str = location.strip() if location and location.strip() else ""
     loc_query = f" in {loc_str}" if loc_str else ""
@@ -453,7 +468,10 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
                         
                     final_summary += f"\n\n--- Executive Search Results ---\n{ceo_search_text}"
 
-                    leads.append({
+                    if yielded_count >= max_results:
+                        return
+
+                    lead_data = {
                         "company": company_name,
                         "industry": industry.strip(),
                         "location": lead_location,
@@ -463,7 +481,9 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
                         "summary_raw": final_summary,
                         "url": url,
                         "domain": domain,
-                    })
+                    }
+                    yield lead_data
+                    yielded_count += 1
                     print(f"  ✓ Found: {company_name} — {lead_location} — {lead_email}")
 
                 # Small delay between queries to avoid rate limiting
@@ -473,7 +493,7 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
                 continue
 
     # Fallback if DuckDuckGo returned nothing
-    if not leads:
+    if yielded_count == 0:
         print("DuckDuckGo returned no usable results — generating demo data.")
         ind_title = industry.strip().title()
         loc = loc_str if loc_str else "San Francisco, CA"
@@ -486,7 +506,7 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
         ]
         for prefix, role, name in demo_companies:
             slug = prefix.lower()
-            leads.append({
+            yield {
                 "company": f"{prefix} {ind_title}",
                 "industry": industry.strip(),
                 "location": loc,
@@ -496,6 +516,7 @@ def scrape_leads(industry: str, location: str, max_results: int = 10):
                 "domain": f"{slug}{industry.lower().replace(' ', '')}.com",
                 "name_hint": name,
                 "role_hint": role,
-            })
-
-    return leads[:max_results]
+            }
+            yielded_count += 1
+            if yielded_count >= max_results:
+                return
