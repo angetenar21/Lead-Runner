@@ -84,6 +84,7 @@ function DashboardContent() {
   const [errorMsg, setErrorMsg] = useState("");
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [isUpgrading, setIsUpgrading] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const userPlan = user?.plan || "free";
   const maxLeadsForPlan = userPlan === "pro" ? 20 : 10;
@@ -366,8 +367,16 @@ function DashboardContent() {
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
 
+      {/* MOBILE BACKDROP */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 z-20 bg-slate-900/50 backdrop-blur-sm md:hidden" 
+          onClick={() => setIsSidebarOpen(false)} 
+        />
+      )}
+
       {/* SIDEBAR */}
-      <aside className="w-72 bg-white border-r border-slate-200 flex flex-col justify-between">
+      <aside className={`fixed inset-y-0 left-0 z-30 w-72 bg-white border-r border-slate-200 flex flex-col justify-between transform transition-transform duration-300 md:relative md:translate-x-0 ${isSidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex-1 overflow-hidden flex flex-col">
           {/* Logo */}
           <div className="p-6 pb-4">
@@ -473,7 +482,15 @@ function DashboardContent() {
       <main className="flex-1 flex flex-col overflow-hidden">
 
         {/* HEADER */}
-        <header className="h-14 border-b border-slate-200 px-8 flex items-center bg-white/80 backdrop-blur-md">
+        <header className="h-14 border-b border-slate-200 px-4 md:px-8 flex items-center bg-white/80 backdrop-blur-md gap-3">
+          <button 
+            className="md:hidden p-1 text-slate-500 hover:bg-slate-100 rounded-lg transition-colors" 
+            onClick={() => setIsSidebarOpen(true)}
+          >
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
           <div className="flex items-center gap-3">
             <span className="flex h-2.5 w-2.5 relative">
               <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${errorMsg ? "bg-red-400" : "bg-emerald-400"}`}></span>
@@ -486,7 +503,7 @@ function DashboardContent() {
         </header>
 
         {/* SCROLLABLE MAIN CONTENT */}
-        <div className="flex-1 overflow-y-auto p-8 space-y-8 bg-slate-50">
+        <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 md:space-y-8 bg-slate-50">
 
           {/* TITLE */}
           <div>
@@ -495,7 +512,7 @@ function DashboardContent() {
           </div>
 
           {/* STATS ROW */}
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
             {[
               { label: "Total Leads", value: leads.length, sub: activeBatchId ? "In selected batch" : "In your account" },
               { label: "AI Enriched", value: leads.filter(l => l.status === "enriched" || l.status === "ready").length, sub: "Groq / Gemini processed" },
@@ -518,7 +535,7 @@ function DashboardContent() {
             <h3 className="text-lg font-bold mb-1 text-slate-900">Launch Lead Scanner</h3>
             <p className="text-slate-500 text-sm mb-6">Each scan creates a new entry in your search history on the left.</p>
 
-            <form onSubmit={handleGenerate} className="grid grid-cols-4 gap-4 items-end">
+            <form onSubmit={handleGenerate} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-500 mb-2">Industry / Niche</label>
                 <div className="relative">
@@ -637,10 +654,10 @@ function DashboardContent() {
           </section>
 
           {/* TABLE & OUTREACH VIEW SPLIT */}
-          <div className="grid grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
             {/* Leads Table */}
-            <div className="col-span-2 bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm shadow-slate-200/50">
-              <div className="p-6 border-b border-slate-200 flex items-center justify-between">
+            <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm shadow-slate-200/50">
+              <div className="p-4 md:p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-0">
                 <div>
                   <h3 className="text-lg font-bold text-slate-900">
                     {activeBatchId
@@ -666,7 +683,7 @@ function DashboardContent() {
 
               <div className="overflow-x-auto min-h-[250px]">
                 {leads.length > 0 ? (
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full text-left border-collapse whitespace-nowrap">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 text-xs font-semibold uppercase tracking-wider">
                         <th className="px-6 py-4">Lead</th>
