@@ -544,10 +544,8 @@ def scrape_target_company(company_name: str):
         if not site_info.get("text") and not site_info.get("title"):
             return None
             
-        # Determine location
-        doc = nlp(site_info["text"][:3000])
-        locations = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
-        lead_location = locations[0] if locations else "Remote"
+        # Determine location fallback
+        lead_location = "Remote"
         
         industry = "Unknown"
         final_summary = f"Scraped text from {domain}:\n{site_info['text'][:1500]}"
