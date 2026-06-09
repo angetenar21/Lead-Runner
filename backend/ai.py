@@ -214,7 +214,7 @@ def draft_outreach_email(lead_data: dict) -> str:
     location = lead_data.get("location", "Unknown")
     summary = lead_data.get("summary", "")
 
-    first_name = name.split()[0] if name and name != "Decision Maker" else "there"
+    first_name = name.split()[0] if name and name not in ["Decision Maker", "Not Found"] else "there"
 
     prompt = f"""You are an expert cold email copywriter for B2B sales outreach.
 

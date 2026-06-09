@@ -540,9 +540,9 @@ def scrape_leads_generator(industry: str, location: str, max_results: int = 10):
                     # --- LAYER 2: DuckDuckGo Executive Search (multiple queries) ---
                     ceo_search_text = ""
                     exec_queries = [
+                        f'site:linkedin.com/in "{company_name}" CEO OR Founder',
                         f'"{company_name}" CEO OR Founder OR "founded by"',
                         f'"{company_name}" "Managing Director" OR "Chief Executive" OR "President"',
-                        f'site:linkedin.com "{company_name}" CEO OR Founder',
                     ]
                     try:
                         time.sleep(1.0)  # Prevent DDG rate limits
