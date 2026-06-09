@@ -12,8 +12,8 @@ const firebaseConfig = {
 
 // Validate that required environment variables are set
 const missingKeys = Object.entries(firebaseConfig)
-  .filter(([_, value]) => !value)
-  .map(([key, _]) => key);
+  .filter(([, value]) => !value)
+  .map(([key]) => key);
 
 if (missingKeys.length > 0) {
   throw new Error(`Firebase initialization is missing required config keys: ${missingKeys.join(", ")}. Please check your .env.local file.`);
