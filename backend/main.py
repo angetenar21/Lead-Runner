@@ -314,13 +314,20 @@ def _auto_enrich_lead(lead: models.Lead, rl: dict, db: Session):
         enriched = ai.enrich_lead(lead_data)
 
         extracted_name = enriched.get("name")
+        extracted_role = enriched.get("role")
         
-        # Fallback for vague names
-        if not extracted_name or extracted_name.lower().strip() in ["decision maker", "executive", "none", "null"]:
-            extracted_name = "Decision Maker"
+        # Reject generic titles that the AI might return as names
+        bad_names = {"decision maker", "executive", "none", "null", "n/a", "unknown", 
+                     "ceo", "founder", "director", "president", "manager", "owner"}
+        
+        if not extracted_name or extracted_name.lower().strip() in bad_names:
+            # Smart fallback: use "Founder at {Company}" instead of generic "Decision Maker"
+            extracted_name = f"Founder at {lead.company}"
+            if not extracted_role:
+                extracted_role = "Founder"
 
         lead.name = extracted_name
-        lead.role = enriched.get("role", lead.role)
+        lead.role = extracted_role or lead.role
         lead.summary = enriched.get("summary", lead.summary)
         lead.status = "enriched"
         db.commit()

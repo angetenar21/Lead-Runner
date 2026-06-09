@@ -316,6 +316,65 @@ def scrape_website_info(url: str) -> dict:
     return result
 
 
+def scrape_team_page(base_url: str) -> str:
+    """
+    Tries to find and scrape the company's About/Team/Leadership page.
+    Returns text content that likely contains executive names.
+    """
+    parsed = urlparse(base_url)
+    base = f"{parsed.scheme}://{parsed.hostname}"
+    
+    # Common paths where companies list their leadership
+    team_paths = [
+        "/about", "/about-us", "/about-us/", "/about/",
+        "/team", "/our-team", "/team/", "/our-team/",
+        "/leadership", "/leadership/",
+        "/people", "/people/",
+        "/company", "/company/",
+        "/who-we-are", "/who-we-are/",
+    ]
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/120.0.0.0 Safari/537.36"
+    }
+    
+    for path in team_paths:
+        try:
+            url = base + path
+            resp = requests.get(url, headers=headers, timeout=5, allow_redirects=True)
+            if resp.status_code != 200:
+                continue
+            
+            soup = BeautifulSoup(resp.text, "html.parser")
+            
+            # Remove noise
+            for el in soup(["script", "style", "nav", "footer", "noscript", "svg", "form"]):
+                el.decompose()
+            
+            text_blocks = []
+            for tag in soup.find_all(["h1", "h2", "h3", "h4", "p", "li", "span", "div"]):
+                clean = tag.get_text(strip=True)
+                if clean and len(clean) > 5:
+                    text_blocks.append(clean)
+            
+            page_text = " ".join(text_blocks)[:2000]
+            
+            # Quick check: does this page actually mention leadership-related words?
+            leadership_keywords = ["ceo", "founder", "co-founder", "director", "president", 
+                                   "managing", "partner", "chief", "head of", "vp ", "vice president",
+                                   "our team", "leadership", "about us"]
+            if any(kw in page_text.lower() for kw in leadership_keywords):
+                print(f"    ✓ Found team/about page: {url}")
+                return page_text
+                
+        except Exception:
+            continue
+    
+    return ""
+
+
 def scrape_leads_generator(industry: str, location: str, max_results: int = 10):
     """
     Scrapes DuckDuckGo and yields lead dictionaries one by one as they are found.
@@ -451,21 +510,41 @@ def scrape_leads_generator(industry: str, location: str, max_results: int = 10):
                     lead_name = ""
                     lead_role = ""
 
-                    # --- Executive Search & Filtering ---
-                    ceo_search_text = ""
+                    # --- LAYER 1: Scrape the company's own Team/About page ---
+                    team_page_text = ""
                     try:
-                        time.sleep(1.0) # Prevent DDG rate limits
+                        team_page_text = scrape_team_page(url)
+                    except Exception as tp_e:
+                        print(f"    ⚠ Team page scrape error: {tp_e}")
+
+                    # --- LAYER 2: DuckDuckGo Executive Search (multiple queries) ---
+                    ceo_search_text = ""
+                    exec_queries = [
+                        f'"{company_name}" CEO OR Founder OR "founded by"',
+                        f'"{company_name}" "Managing Director" OR "Chief Executive" OR "President"',
+                        f'site:linkedin.com "{company_name}" CEO OR Founder',
+                    ]
+                    try:
+                        time.sleep(1.0)  # Prevent DDG rate limits
                         with DDGS() as ddgs_exec:
-                            exec_query = f'"{company_name}" CEO OR Founder'
-                            exec_results = ddgs_exec.text(exec_query, max_results=3)
-                            for r in exec_results:
-                                ceo_search_text += f"{r.get('title', '')} - {r.get('body', '')}\n"
+                            for eq in exec_queries:
+                                if ceo_search_text and len(ceo_search_text) > 200:
+                                    break  # We have enough data
+                                try:
+                                    exec_results = ddgs_exec.text(eq, max_results=3)
+                                    for r in exec_results:
+                                        ceo_search_text += f"{r.get('title', '')} - {r.get('body', '')}\n"
+                                except Exception:
+                                    continue
                     except Exception as e:
                         print(f"  ⊘ Exec search error for {company_name}: {e}")
                     
-                    if not ceo_search_text.strip():
+                    if not ceo_search_text.strip() and not team_page_text.strip():
                         print(f"  ⚠ No executive info found for {company_name}, but continuing anyway.")
-                        
+                    
+                    # Combine all intelligence sources
+                    if team_page_text:
+                        final_summary += f"\n\n--- Company Team/About Page ---\n{team_page_text[:1500]}"
                     final_summary += f"\n\n--- Executive Search Results ---\n{ceo_search_text}"
 
                     if yielded_count >= max_results:

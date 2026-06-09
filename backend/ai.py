@@ -145,24 +145,33 @@ def enrich_lead(lead_data: dict) -> dict:
     name_hint = lead_data.get("name_hint", "")
     role_hint = lead_data.get("role_hint", "")
 
-    prompt = f"""You are an expert B2B sales intelligence assistant. We scraped a business and performed a targeted executive search. Extract the decision-maker for my CRM.
+    prompt = f"""You are an expert B2B lead intelligence analyst. Your #1 job is to find the REAL NAME of a human executive at this company.
 
-SCRAPED DATA:
-- Company: {company}
-- Industry: {industry}
-- Location: {location}
-- Website & Search Snippets: {snippet[:1500]}
+COMPANY: {company}
+INDUSTRY: {industry}  
+LOCATION: {location}
+DOMAIN: {domain}
 
-INSTRUCTIONS:
-1. Look at the "Executive Search Results" inside the snippets.
-2. Identify the real, human name of the CEO, Founder, or Director.
-3. If you CANNOT find a specific real person's name, return null for contact_name. DO NOT hallucinate. Do NOT use generic titles like "Decision Maker".
+SCRAPED DATA (includes homepage text, team/about page, and search results):
+{snippet[:3000]}
 
-GENERATE the following as valid JSON:
+YOUR TASK - FIND A REAL PERSON'S NAME:
+1. FIRST look in "Company Team/About Page" section - this is the most reliable source. Look for names near titles like CEO, Founder, Director, President, Managing Partner, etc.
+2. THEN check "Executive Search Results" - look for patterns like "John Smith, CEO of {company}" or "{company} was founded by Jane Doe".
+3. LinkedIn results often contain names in format "First Last - Title at Company".
+4. Look for ANY human name mentioned alongside the company - even a team member, marketing director, or VP is better than nothing.
+
+CRITICAL RULES:
+- You MUST try your hardest to find a real name. Look at every sentence in the data.
+- A first name + last name is ideal (e.g. "Sarah Chen"). Even just a first and last name mentioned near the company name counts.
+- NEVER return "Decision Maker", "Executive", "CEO", "Founder", "N/A", "Unknown", or any generic title as contact_name. These are NOT names.
+- If you truly cannot find any human name after careful analysis, set contact_name to null.
+
+Return ONLY this JSON:
 {{
-  "contact_name": "Exact full name of the executive, or null if absolutely not found.",
-  "contact_role": "Their exact job title (e.g. CEO, Founder). If name is null, this can be null.",
-  "summary": "A professional 2-sentence company summary based on the snippets."
+  "contact_name": "The real human name you found, or null if truly impossible",
+  "contact_role": "Their job title (CEO, Founder, Director, etc.), or 'Founder' as default if you found a name but no title",
+  "summary": "A professional 2-sentence company summary"
 }}
 
 Return ONLY the JSON object. No explanation, no markdown."""
