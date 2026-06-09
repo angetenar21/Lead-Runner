@@ -40,6 +40,17 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class GoogleLoginRequest(BaseModel):
+    email: str
+    full_name: str
+    firebase_uid: str
+
+class GenerateRequest(BaseModel):
+    industry: str
+    location: str
+    max_leads: int = 5
+    auto_enrich: bool = False
+
 
 # ─── Health Check ────────────────────────────────────────────────────
 
@@ -82,6 +93,30 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == req.email).first()
     if not user or not verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    token = create_access_token({"user_id": user.id, "email": user.email})
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {"id": user.id, "email": user.email, "full_name": user.full_name, "plan": user.plan or "free"},
+    }
+
+
+@app.post("/api/auth/google")
+def google_login(req: GoogleLoginRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == req.email).first()
+    
+    if not user:
+        # Auto-register if they don't exist
+        import secrets
+        user = models.User(
+            email=req.email,
+            password_hash=hash_password(secrets.token_urlsafe(32)), # Random secure password since they use Google
+            full_name=req.full_name,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
     token = create_access_token({"user_id": user.id, "email": user.email})
     return {
