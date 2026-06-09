@@ -210,6 +210,22 @@ def _validate_company_name(name: str) -> bool:
         return False
     if _is_article_title(name):
         return False
+    
+    # Reject common page titles that get mistakenly extracted as company names
+    generic_page_titles = {
+        "about us", "about", "our team", "team", "contact us", "contact",
+        "services", "our services", "home", "homepage", "welcome",
+        "products", "solutions", "careers", "jobs", "blog", "news",
+        "faq", "help", "support", "pricing", "login", "sign in",
+        "register", "sign up", "privacy policy", "terms of service",
+        "terms", "privacy", "who we are", "what we do", "how it works",
+        "resources", "partners", "clients", "portfolio", "case studies",
+        "testimonials", "reviews", "get started", "learn more",
+        "official site", "official website",
+    }
+    if name.lower().strip() in generic_page_titles:
+        return False
+    
     return True
 
 
@@ -485,7 +501,11 @@ def scrape_leads_generator(industry: str, location: str, max_results: int = 10):
 
                     if not company_name:
                         parts = re.split(r"\s*[\-–—|:»]\s*", title)
-                        generic = {"home", "official site", "official website", "welcome", ""}
+                        generic = {"home", "official site", "official website", "welcome", "",
+                                   "about us", "about", "our team", "team", "contact us", "contact",
+                                   "services", "our services", "products", "solutions", "careers",
+                                   "blog", "news", "faq", "help", "support", "pricing",
+                                   "who we are", "what we do", "how it works", "resources"}
                         candidates = [p.strip() for p in parts if p.strip().lower() not in generic and len(p.strip()) >= 2]
                         candidates = [c for c in candidates if _validate_company_name(c)]
                         if candidates:
