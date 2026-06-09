@@ -953,8 +953,8 @@ function DashboardContent() {
             </div>
 
             {/* Comparison */}
-            <div className="px-8 py-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+            <div className="px-4 sm:px-8 py-6 space-y-4 max-h-[60vh] overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
                   <div className="text-xs font-bold uppercase tracking-wider text-slate-400">Free</div>
                   <div className="text-2xl font-extrabold text-slate-900 mt-1">$0<span className="text-sm font-normal text-slate-400">/mo</span></div>
